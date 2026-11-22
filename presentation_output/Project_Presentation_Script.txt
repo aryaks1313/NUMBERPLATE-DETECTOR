@@ -1,0 +1,38 @@
+PROJECT PRESENTATION SCRIPT
+
+Project: Number Plate Recognition at Service Gate
+Venue: Coastal Star, Nettoor
+Date: 23 November 2026
+Time: 3:30 PM
+
+SLIDE 1 - TITLE
+Good afternoon. My project is called Number Plate Recognition at the Service Gate. It reads a vehicle number plate from a camera or video. Then it checks the plate against service bookings and shows the result to the team.
+
+SLIDE 2 - PROBLEM STATEMENT
+At a busy service gate, staff may not know which customer has arrived. They may need to read the number plate and search for the booking by hand. This can take time. My project aims to show the vehicle number and booking details earlier, so the service advisor can prepare.
+
+SLIDE 3 - TECHNOLOGY USED
+The camera or video provides the images. OpenCV reads the images and prepares each frame. A YOLO model finds the number plate area. Tesseract OCR reads the letters and numbers. Python and FastAPI run the application. The booking data is stored in the database, and the application can import a CSV file. HTML, CSS and JavaScript show the result in a browser.
+
+SLIDE 4 - PROJECT FLOW
+First, the application captures a frame. The detector looks for a plate. OCR reads the characters, and the application cleans the text into an Indian plate format, such as KL 07 AB 1234. It then searches for a booking for today. The screen shows the clearest recognized frame for each plate. When a booking matches, the screen shows the customer, appointment time and advisor. If no booking matches, it shows that the plate has no match.
+
+LIVE DEMO
+I will open the video processing page and select the sample gate video. For the prepared presentation booking, the expected result is KL 02 HB 1234. The booking should show Gate Demo Presentation, 3:30 PM, and Service Advisor 1, if the sample booking is present for 23 November 2026. The result can be different if the sample CSV or database has been changed. For a live camera test, the camera must point at a car with a clear plate. A camera pointed at a room will not find a plate.
+
+SLIDE 5 - CHALLENGES AND CURRENT LIMITS
+Recognition can be difficult when a plate is dirty, angled, far away, blurred, or in low light. The booking must also have the correct registration number and date. The detector warm benchmark reached 32.6 frames per second on a still image. The current video process samples about 6 frames per second. This does not prove that the full application reaches 24 frames per second. We also have not yet verified the target of reading 8 out of 10 unseen plates. These tests still need to be completed using a labeled test set.
+
+SLIDE 6 - FUTURE ENHANCEMENT
+The next step is to test with at least ten unseen plates. The test should include a dirty or angled plate and a night or low-light example. We can collect examples from the actual gate, improve the detector and OCR, and measure the full camera-to-screen speed. We can also add direct Excel file import. The current booking import uses CSV.
+
+SLIDE 7 - CONCLUSION
+This project links a vehicle plate to a service booking. It uses camera input, plate detection, OCR, booking lookup and a results screen. The current version is ready to demonstrate with the sample video and booking data. The next work is to complete the ten-plate accuracy test and measure the full system speed. Thank you. I am ready for your questions.
+
+DEMO CHECKLIST
+1. Start the application and sign in with the configured administrator account.
+2. Confirm the sample booking for the presentation date is loaded.
+3. Open Video Processing and upload the prepared sample video.
+4. Show the recognized plate and matching booking result.
+5. For a live camera test, select the correct camera and point it at a vehicle plate.
+6. Explain that the 32.6 FPS result is a detector-only still-image benchmark. Do not call it a 24 FPS full application result.

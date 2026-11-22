@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coastal Star | Intelligent Gate Recognition</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app-shell">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="brand">
+            <div class="brand-mark">CS</div>
+            <div>
+                <h2>COASTAL STAR</h2>
+                <span>INTELLIGENT GATE SYSTEM</span>
+            </div>
+        </div>
+
+        <div class="sidebar-label">WORKSPACE</div>
+        <nav class="navigation">
+            <button class="nav-item active" data-section="overview">
+                <span>▦</span> Overview
+            </button>
+            <button class="nav-item admin-only" data-section="booking" hidden>
+                <span>＋</span> Register Booking
+            </button>
+            <button class="nav-item" data-section="bookings">
+                <span>▤</span> My Bookings
+            </button>
+            <button class="nav-item admin-only" data-section="video" hidden>
+                <span>▶</span> Video Processing
+            </button>
+            <button class="nav-item admin-only" data-section="monitor" hidden>
+                <span>◉</span> Live Gate Monitor
+            </button>
+            <button class="nav-item admin-only" data-section="advisors" hidden>
+                <span>♙</span> Service Advisors
+            </button>
+            <button class="nav-item" data-section="notifications">
+                <span>♧</span> Notifications
+            </button>
+        </nav>
+
+        <div class="sidebar-bottom">
+            <div class="system-status">
+                <span class="status-dot"></span>
+                System Dashboard
+                <small>Connected interface</small>
+            </div>
+            <button id="logoutBtn" class="logout-btn">↪ Sign Out</button>
+        </div>
+    </aside>
+
+    <!-- Main area -->
+    <main class="main-content">
+        <header class="topbar">
+            <div>
+                <div class="eyebrow">COASTAL STAR · NETTOOR</div>
+                <h1 id="pageTitle">Overview</h1>
+            </div>
+            <div class="topbar-user">
+                <div class="user-avatar" id="userAvatar">CS</div>
+                <div>
+                    <strong id="welcomeName">Loading...</strong>
+                    <small id="roleBadge">Checking account</small>
+                </div>
+            </div>
+        </header>
+
+        <div id="globalMessage" class="message" hidden></div>
+
+        <!-- Overview -->
+        <section id="overviewSection" class="page-section active">
+            <div class="welcome-panel">
+                <div>
+                    <div class="eyebrow gold-text">SMART VEHICLE RECOGNITION</div>
+                    <h2>Welcome to the Intelligent Service Gate</h2>
+                    <p>Recognize arriving vehicles, match service bookings, and notify the assigned advisor.</p>
+                </div>
+                <div class="welcome-symbol">✦</div>
+            </div>
+
+            <div class="stats-grid">
+                <article class="stat-card">
+                    <span class="stat-label" id="statOneLabel">Total Bookings</span>
+                    <strong id="statOne">0</strong>
+                    <small>Booking records</small>
+                </article>
+                <article class="stat-card">
+                    <span class="stat-label" id="statTwoLabel">Today's Bookings</span>
+                    <strong id="statTwo">0</strong>
+                    <small>Scheduled today</small>
+                </article>
+                <article class="stat-card">
+                    <span class="stat-label" id="statThreeLabel">Vehicles Detected</span>
+                    <strong id="statThree">0</strong>
+                    <small>Recognition records</small>
+                </article>
+                <article class="stat-card">
+                    <span class="stat-label" id="statFourLabel">Notifications</span>
+                    <strong id="statFour">0</strong>
+                    <small>System notifications</small>
+                </article>
+            </div>
+
+            <div class="content-grid overview-grid">
+                <article class="panel">
+                    <div class="panel-heading">
+                        <div>
+                            <h3>Recent Bookings</h3>
+                            <p>Latest service appointments</p>
+                        </div>
+                        <button class="text-button" data-go="bookings">View all →</button>
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Customer</th>
+                                    <th>Vehicle Number</th>
+                                    <th>Appointment</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recentBookingRows">
+                                <tr><td colspan="4" class="empty-cell">Loading bookings...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+
+            </div>
+        </section>
+
+        <!-- Register Booking -->
+        <section id="bookingSection" class="page-section admin-only" hidden>
+            <div class="section-intro">
+                <h2>Register Service Booking</h2>
+                <p>Enter customer, vehicle, appointment, and assigned service advisor details.</p>
+            </div>
+
+            <form id="bookingForm" class="panel form-panel">
+                <div class="form-section-title">Customer Information</div>
+                <div class="form-grid">
+                    <label>Customer Name
+                        <input name="customer_name" required placeholder="Enter customer name">
+                    </label>
+                    <label>Phone Number
+                        <input name="phone" required type="tel" placeholder="Enter phone number">
+                    </label>
+                </div>
+
+                <div class="form-section-title">Vehicle Information</div>
+                <div class="form-grid">
+                    <label>Vehicle Registration Number
+                        <input name="vehicle_number" required placeholder="KL 07 AB 1234">
+                    </label>
+                    <label>Vehicle Model
+                        <input name="vehicle_model" required placeholder="Mercedes-Benz C-Class">
+                    </label>
+                </div>
+
+                <div class="form-section-title">Appointment Details</div>
+                <div class="form-grid">
+                    <label>Booking Date
+                        <input name="booking_date" type="date" required>
+                    </label>
+                    <label>Booking Time
+                        <input name="booking_time" type="time" required>
+                    </label>
+                    <label>Service Type
+                        <select name="service_type" required>
+                            <option value="">Select service</option>
+                            <option>General Service</option>
+                            <option>Periodic Maintenance</option>
+                            <option>Engine Service</option>
+                            <option>Body Repair</option>
+                            <option>Accident Repair</option>
+                            <option>Diagnostic Check</option>
+                            <option>Other</option>
+                        </select>
+                    </label>
+                    <label>Assign Service Advisor
+                        <select id="bookingAdvisor" name="advisor_id" required>
+                            <option value="">Loading advisors...</option>
+                        </select>
+                    </label>
+                    <label>Booking Status
+                        <select name="status">
+                            <option value="Scheduled">Scheduled</option>
+                            <option value="Confirmed">Confirmed</option>
+                        </select>
+                    </label>
+                </div>
+
+                <div class="form-actions">
+                    <button type="submit" class="primary-btn">Save Booking</button>
+                    <button type="reset" class="secondary-btn">Clear Form</button>
+                </div>
+                <div id="bookingMessage" class="message" hidden></div>
+            </form>
+
+            <article class="panel form-panel">
+                <div class="panel-heading">
+                    <div>
+                        <h3>Import bookings from CSV</h3>
+                        <p>Upload rows with customer, vehicle, appointment, and advisor details.</p>
+                    </div>
+                    <a class="secondary-btn" href="/api/bookings-template">Download CSV template</a>
+                </div>
+                <form id="bookingImportForm" class="booking-import-form">
+                    <label class="upload-zone" for="bookingCsvFile">
+                        <span class="upload-icon">↑</span>
+                        <strong>Select a booking CSV file</strong>
+                        <small>UTF-8 CSV, up to 5 MB. Existing bookings are skipped.</small>
+                        <input id="bookingCsvFile" name="file" type="file" accept=".csv,text/csv" required>
+                    </label>
+                    <button id="bookingImportSubmit" type="submit" class="primary-btn">Import CSV</button>
+                    <div id="bookingImportMessage" class="message" hidden></div>
+                </form>
+            </article>
+        </section>
+
+        <!-- Bookings -->
+        <section id="bookingsSection" class="page-section">
+            <div class="section-intro">
+                <h2>Service Bookings</h2>
+                <p id="bookingPageDescription">View service appointment records.</p>
+            </div>
+            <article class="panel">
+                <div class="panel-heading">
+                    <div>
+                        <h3>Booking Records</h3>
+                        <p>Customer and vehicle appointment details</p>
+                    </div>
+                    <button id="refreshBookings" class="secondary-btn">↻ Refresh</button>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Customer</th>
+                                <th>Phone</th>
+                                <th>Vehicle Number</th>
+                                <th>Vehicle Model</th>
+                                <th>Date</th>
+                                <th>Time</th>
+                                <th>Service</th>
+                                <th>Advisor</th>
+                                <th>Status</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="bookingRows">
+                            <tr><td colspan="10" class="empty-cell">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </article>
+        </section>
+
+        <!-- Video Processing -->
+        <section id="videoSection" class="page-section admin-only" hidden>
+            <div class="section-intro">
+                <h2>Video Recognition</h2>
+                <p>Upload a gate recording to detect vehicles, extract number plates, and match bookings.</p>
+            </div>
+
+            <div class="content-grid video-grid">
+                <article class="panel">
+                    <div class="panel-heading">
+                        <div><h3>Upload Gate Video</h3><p>Supported formats depend on your server's OpenCV build.</p></div>
+                    </div>
+                    <form id="videoForm">
+                        <label class="upload-zone" for="videoFile">
+                            <span class="upload-icon">↑</span>
+                            <strong>Select a video file</strong>
+                            <small>MP4, AVI, MOV or other supported video formats</small>
+                            <input id="videoFile" name="video" type="file" accept="video/*" required>
+                        </label>
+                        <div id="selectedVideoName" class="file-name">No video selected</div>
+                        <button id="videoSubmit" type="submit" class="primary-btn full-width">Process Video</button>
+                        <div id="videoMessage" class="message" hidden></div>
+                        <div id="videoProgress" class="progress-track" hidden><span></span></div>
+                    </form>
+                </article>
+
+            </div>
+
+            <article class="panel results-panel">
+                <div class="panel-heading">
+                    <div><h3>Video Detection Results</h3><p id="videoSummary">Processed results will appear here.</p></div>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Plate Number</th>
+                                <th>Match Status</th>
+                                <th>Customer</th>
+                                <th>Appointment</th>
+                                <th>Advisor</th>
+                                <th>Confidence</th>
+                                <th>Frame</th>
+                                <th>Best Frame</th>
+                            </tr>
+                        </thead>
+                        <tbody id="videoResults">
+                            <tr><td colspan="8" class="empty-cell">No recognized plates yet.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </article>
+        </section>
+
+        <!-- Live Monitor -->
+        <section id="monitorSection" class="page-section admin-only" hidden>
+            <div class="section-intro">
+                <h2>Live Gate Monitoring</h2>
+                <p>Point the camera at the gate lane. Keep the vehicle plate large, focused, and inside the frame.</p>
+            </div>
+
+            <div class="monitor-toolbar panel">
+                <div>
+                    <span id="monitorStatusDot" class="status-dot"></span>
+                    <strong id="monitorStatusText">Monitor stopped</strong>
+                    <small id="monitorFrames">0 frames processed</small>
+                </div>
+                <div class="button-group">
+                    <button id="startMonitor" class="primary-btn">Start Monitoring</button>
+                    <button id="stopMonitor" class="secondary-btn">Stop Monitoring</button>
+                </div>
+            </div>
+
+            <div class="content-grid monitor-grid">
+                <article class="panel camera-panel">
+                    <div class="panel-heading">
+                        <div><h3>Camera Feed</h3><p>Annotated frame from the gate camera</p></div>
+                        <span class="live-indicator">● LIVE</span>
+                    </div>
+                    <div class="camera-screen">
+                        <img id="liveFrame" alt="Live camera frame" hidden>
+                        <div id="cameraPlaceholder" class="camera-placeholder">
+                            <div class="camera-placeholder-icon">◉</div>
+                            <strong>Camera feed not available</strong>
+                            <small>Start monitoring to display captured frames.</small>
+                        </div>
+                    </div>
+                    <div id="monitorError" class="message error" hidden></div>
+                </article>
+
+                <article class="panel recognition-panel">
+                    <div class="panel-heading">
+                        <div><h3>Recognition Details</h3><p>Latest vehicle detection</p></div>
+                        <span id="liveDetectionStatus" class="status-pill neutral">Waiting</span>
+                    </div>
+
+                    <div class="plate-display">
+                        <small>EXTRACTED REGISTRATION NUMBER</small>
+                        <strong id="livePlate">---</strong>
+                        <span id="liveOCR">OCR text: Waiting for detection</span>
+                    </div>
+
+                    <div class="detail-list">
+                        <div><span>YOLO confidence</span><strong id="liveConfidence">---</strong></div>
+                        <div><span>Customer</span><strong id="liveCustomer">---</strong></div>
+                        <div><span>Appointment Time</span><strong id="liveAppointment">---</strong></div>
+                        <div><span>Vehicle</span><strong id="liveVehicle">---</strong></div>
+                        <div><span>Service Advisor</span><strong id="liveAdvisor">---</strong></div>
+                        <div><span>Service Type</span><strong id="liveService">---</strong></div>
+                    </div>
+
+                    <div id="liveRecognitionMessage" class="recognition-message">
+                        Waiting for a vehicle to enter the detection area.
+                    </div>
+                </article>
+            </div>
+        </section>
+
+        <!-- Advisors -->
+        <section id="advisorsSection" class="page-section admin-only" hidden>
+            <div class="section-intro">
+                <h2>Service Advisors</h2>
+                <p>Create advisor accounts and assign bookings to the correct advisor.</p>
+            </div>
+
+            <div class="content-grid">
+                <article class="panel">
+                    <h3>Create Advisor Account</h3>
+                    <form id="advisorForm" class="stack-form">
+                        <label>Advisor Name<input name="name" required placeholder="Advisor name"></label>
+                        <label>Username<input name="username" required placeholder="Login username"></label>
+                        <label>Password<input name="password" type="password" required minlength="6" placeholder="Create password"></label>
+                        <label>Phone Number<input name="phone" required type="tel" placeholder="Phone number"></label>
+                        <label>Email<input name="email" type="email" placeholder="Email address"></label>
+                        <button class="primary-btn" type="submit">Create Advisor</button>
+                        <div id="advisorMessage" class="message" hidden></div>
+                    </form>
+                </article>
+
+                <article class="panel">
+                    <div class="panel-heading"><div><h3>Advisor Directory</h3><p>Available service advisors</p></div></div>
+                    <div id="advisorList" class="advisor-list">Loading advisors...</div>
+                </article>
+            </div>
+        </section>
+
+        <!-- Notifications -->
+        <section id="notificationsSection" class="page-section">
+            <div class="section-intro">
+                <h2>Notifications</h2>
+                <p>Vehicle arrival and booking match notifications.</p>
+            </div>
+            <article class="panel">
+                <div class="panel-heading">
+                    <div><h3>Notification Centre</h3><p>Updates relevant to your account</p></div>
+                    <button id="refreshNotifications" class="secondary-btn">↻ Refresh</button>
+                </div>
+                <div id="notificationList" class="notification-list">
+                    Loading notifications...
+                </div>
+            </article>
+        </section>
+
+        <!-- Booking details dialog -->
+        <dialog id="bookingDialog" class="details-dialog">
+            <div class="dialog-header">
+                <h3>Booking Details</h3>
+                <button id="closeBookingDialog" class="icon-button" type="button">×</button>
+            </div>
+            <div id="bookingDetailsContent"></div>
+        </dialog>
+
+        <footer class="footer">
+            Coastal Star · Intelligent Vehicle Recognition System
+        </footer>
+    </main>
+</div>
+
+<script src="/static/app.js?v=20261121-3"></script>
+</body>
+</html>

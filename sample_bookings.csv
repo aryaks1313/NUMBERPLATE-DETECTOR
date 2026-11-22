@@ -1,0 +1,8 @@
+customer_name,phone,vehicle_number,vehicle_model,booking_date,booking_time,service_type,status,advisor_id,advisor_name
+Gate Demo Today,9876543215,KL02HB1234,Mercedes-Benz Demo Vehicle,2026-11-20,15:30,General Service,confirmed,1,Service Advisor 1
+Arun Kumar,9876543210,KL07AB1234,Mercedes-Benz C-Class,2026-11-23,10:30,General Service,confirmed,1,Service Advisor 1
+Rahul Menon,9876543211,KL07CD5678,Mercedes-Benz E-Class,2026-11-23,11:00,Oil Change,confirmed,1,Service Advisor 1
+Anjali Nair,9876543212,KL08EF9012,Mercedes-Benz GLC,2026-11-23,11:30,Brake Inspection,confirmed,2,Service Advisor 2
+Vishnu Raj,9876543213,KL07GH3456,Mercedes-Benz A-Class,2026-11-23,12:00,Regular Service,confirmed,2,Service Advisor 2
+Demo Customer,9876543214,KL11BD3333,Mercedes-Benz Demo Vehicle,2026-11-23,12:30,General Service,confirmed,2,Service Advisor 2
+Gate Demo Presentation,9876543216,KL02HB1234,Mercedes-Benz Demo Vehicle,2026-11-23,15:30,General Service,confirmed,1,Service Advisor 1

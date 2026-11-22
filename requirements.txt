@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary
+python-multipart
+ultralytics
+opencv-python
+pytesseract
+numpy
+pandas
+python-dotenv
+itsdangerous
+python-multipart
