@@ -97,7 +97,7 @@ class Notification(Base):
     channel = Column(String(30), nullable=False)
     status = Column(String(40), default="Created")
 
-    # ADDED: notification read/unread status
+    
     is_read = Column(Boolean, default=False, nullable=False)
 
     created_at = Column(

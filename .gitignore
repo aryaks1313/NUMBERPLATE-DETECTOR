@@ -1,0 +1,8 @@
+.env
+client_secret*.json
+gmail-oauth-client.json
+gmail-oauth-token.json
+token.json
+__pycache__/
+.venv/
+.codex-build/

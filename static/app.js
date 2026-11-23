@@ -1,8 +1,6 @@
 "use strict";
 
-/* =========================================
-   APPLICATION STATE AND API
-========================================= */
+
 
 let currentUser = null;
 let monitorTimer = null;
@@ -20,7 +18,7 @@ async function api(url, options = {}) {
         }
     };
 
-    // Do not set Content-Type for FormData.
+
     if (options.body && !(options.body instanceof FormData)) {
         config.headers["Content-Type"] = "application/json";
     }
@@ -110,12 +108,12 @@ function formatTime(value) {
 function statusClass(status) {
     const value = String(status || "").toLowerCase();
 
-    if (value.includes("match") || value.includes("confirm") || value.includes("success")) {
-        return "success";
+    if (value.includes("unmatch") || value.includes("walk_in") || value.includes("pending") || value.includes("scheduled")) {
+        return "warning";
     }
 
-    if (value.includes("unmatch") || value.includes("pending") || value.includes("scheduled")) {
-        return "warning";
+    if (value.includes("match") || value.includes("confirm") || value.includes("success")) {
+        return "success";
     }
 
     if (value.includes("error") || value.includes("fail")) {
@@ -162,9 +160,7 @@ function showPage(sectionName) {
     if (sectionName === "overview") loadDashboard();
 }
 
-/* =========================================
-   LOGIN SESSION AND INITIALIZATION
-========================================= */
+
 
 async function initializeApp() {
     try {
@@ -187,7 +183,7 @@ async function initializeApp() {
                 .substring(0, 2)
                 .toUpperCase();
 
-        // Show admin features only to administrators.
+
         document.querySelectorAll(".admin-only").forEach((element) => {
             element.hidden = !isAdmin;
         });
@@ -197,7 +193,7 @@ async function initializeApp() {
                 "View bookings assigned to your advisor account.";
         }
 
-        // Set today's date as the default booking date.
+
         const dateInput = document.querySelector('[name="booking_date"]');
 
         if (dateInput) {
@@ -243,9 +239,7 @@ function showGlobalError(message) {
     element.hidden = false;
 }
 
-/* =========================================
-   NAVIGATION
-========================================= */
+
 
 document.querySelectorAll(".nav-item").forEach((button) => {
     button.addEventListener("click", () => {
@@ -259,9 +253,7 @@ document.querySelectorAll("[data-go]").forEach((button) => {
     });
 });
 
-/* =========================================
-   DASHBOARD
-========================================= */
+
 
 async function loadDashboard() {
     try {
@@ -309,9 +301,7 @@ async function loadDashboard() {
     }
 }
 
-/* =========================================
-   ADVISOR DROPDOWN
-========================================= */
+
 
 async function loadAdvisorsForBooking() {
     if (currentUser?.role !== "admin") return;
@@ -357,9 +347,7 @@ async function loadAdvisorsForBooking() {
     }
 }
 
-/* =========================================
-   BOOKING REGISTRATION
-========================================= */
+
 
 $("bookingForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -476,9 +464,6 @@ $("bookingImportForm")?.addEventListener("submit", async (event) => {
     }
 });
 
-/* =========================================
-   BOOKING LIST
-========================================= */
 
 async function loadBookings() {
     try {
@@ -569,9 +554,7 @@ function renderRecentBookings(bookings) {
     `).join("");
 }
 
-/* =========================================
-   BOOKING DETAILS
-========================================= */
+
 
 async function viewBooking(bookingId) {
     try {
@@ -607,9 +590,7 @@ $("closeBookingDialog")?.addEventListener("click", () => {
     $("bookingDialog").close();
 });
 
-/* =========================================
-   VIDEO UPLOAD AND PROCESSING
-========================================= */
+
 
 $("videoFile")?.addEventListener("change", (event) => {
     const file = event.target.files[0];
@@ -645,7 +626,7 @@ $("videoForm")?.addEventListener("submit", async (event) => {
     hideMessage("videoMessage");
 
     $("videoResults").innerHTML =
-        '<tr><td colspan="8" class="empty-cell">Processing video. Results will show only recognized plates.</td></tr>';
+        '<tr><td colspan="9" class="empty-cell">Processing video. Results will show only high-confidence recognized plates.</td></tr>';
 
     try {
         const result = await api("/api/video/upload", {
@@ -669,7 +650,7 @@ $("videoForm")?.addEventListener("submit", async (event) => {
         showMessage("videoMessage", error.message, "error");
 
         $("videoResults").innerHTML =
-            `<tr><td colspan="8" class="empty-cell">${escapeHtml(error.message)}</td></tr>`;
+            `<tr><td colspan="9" class="empty-cell">${escapeHtml(error.message)}</td></tr>`;
 
     } finally {
         button.disabled = false;
@@ -684,11 +665,15 @@ function renderVideoResults(result) {
     $("videoSummary").textContent =
         `Recognized plates: ${results.length} · ` +
         `Matched: ${result.matched_count ?? 0} · ` +
-        `Unmatched: ${result.unmatched_count ?? 0}`;
+        `Unmatched: ${result.unmatched_count ?? 0} · ` +
+        `Walk-ins assigned: ${result.walk_in_assigned_count ?? 0} · ` +
+        `Speed: ${Number.isFinite(Number(result.processing_fps)) ? Number(result.processing_fps).toFixed(2) : "—"} fps (target ${Number(result.target_sample_fps ?? 4).toFixed(0)}) · ` +
+        `New notifications: ${result.notifications_created ?? 0} · ` +
+        `Skipped notifications: ${result.notifications_skipped ?? 0}`;
 
     if (!results.length) {
         $("videoResults").innerHTML =
-            '<tr><td colspan="8" class="empty-cell">No readable number plates were recognized in this video.</td></tr>';
+            '<tr><td colspan="9" class="empty-cell">No high-confidence number plates were recognized in this video.</td></tr>';
         return;
     }
 
@@ -707,6 +692,7 @@ function renderVideoResults(result) {
                 <td>${escapeHtml(item.booking_time ? formatTime(item.booking_time) : "—")}</td>
                 <td>${escapeHtml(item.advisor || "—")}</td>
                 <td>${formatConfidence(item.confidence)}</td>
+                <td>${formatConfidence(item.ocr_confidence)}</td>
                 <td>${escapeHtml(item.frame_number ?? "—")}</td>
                 <td>
                     ${imageUrl
@@ -741,9 +727,7 @@ function formatConfidence(value) {
     return `${(number <= 1 ? number * 100 : number).toFixed(1)}%`;
 }
 
-/* =========================================
-   LIVE MONITOR
-========================================= */
+
 
 $("startMonitor")?.addEventListener("click", async () => {
     try {
@@ -839,19 +823,23 @@ async function loadMonitorStatus() {
 
 function renderLiveRecognition(data) {
     const status = String(data.status || "Waiting");
+    const showPlate = ["matched", "unmatched", "walk_in_assigned", "duplicate"].includes(status);
 
     $("liveDetectionStatus").textContent = status;
     $("liveDetectionStatus").className =
         `status-pill ${statusClass(status)}`;
 
     $("livePlate").textContent =
-        data.plate_display || data.plate_number || "Not detected";
+        showPlate ? (data.plate_display || data.plate_number || "Not detected") : "Waiting for a high-confidence plate";
 
     $("liveOCR").textContent =
-        `OCR text: ${data.ocr_text || "No text extracted"}`;
+        showPlate ? `OCR text: ${data.ocr_text || "No text extracted"}` : "OCR text hidden until confidence is high";
 
     $("liveConfidence").textContent =
         formatConfidence(data.confidence);
+
+    $("liveOcrConfidence").textContent =
+        formatConfidence(data.ocr_confidence);
 
     $("liveCustomer").textContent =
         data.customer_name || "No booking match";
@@ -872,9 +860,7 @@ function renderLiveRecognition(data) {
         data.message || "Detection result received.";
 }
 
-/* =========================================
-   ADVISOR MANAGEMENT
-========================================= */
+
 
 $("advisorForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -941,23 +927,51 @@ async function loadAdvisors() {
             <div class="advisor-item">
                 <strong>${escapeHtml(advisor.name)}</strong>
                 <small>Username: ${escapeHtml(advisor.username)}</small>
-                <small>Phone: ${escapeHtml(advisor.phone || "—")}</small>
-                <small>Email: ${escapeHtml(advisor.email || "—")}</small>
+                <label>WhatsApp phone
+                    <input id="advisorPhone-${Number(advisor.id)}" type="tel" value="${escapeHtml(advisor.phone || "")}" placeholder="7025150147">
+                </label>
+                <label>Notification email
+                    <input id="advisorEmail-${Number(advisor.id)}" type="email" value="${escapeHtml(advisor.email || "")}" placeholder="advisor@example.com">
+                </label>
+                <button class="table-action" type="button" data-save-advisor="${Number(advisor.id)}">Save notification contacts</button>
+                <div id="advisorContactMessage-${Number(advisor.id)}" class="message" hidden></div>
                 <small>Status: ${advisor.is_active === false ? "Inactive" : "Active"}</small>
             </div>
         `).join("");
+
+        document.querySelectorAll("[data-save-advisor]").forEach((button) => {
+            button.addEventListener("click", async () => {
+                const advisorId = Number(button.dataset.saveAdvisor);
+                button.disabled = true;
+                try {
+                    const result = await api(`/api/advisors/${advisorId}/contact`, {
+                        method: "PATCH",
+                        body: JSON.stringify({
+                            phone: $(`advisorPhone-${advisorId}`).value.trim(),
+                            email: $(`advisorEmail-${advisorId}`).value.trim() || null
+                        })
+                    });
+                    showMessage(`advisorContactMessage-${advisorId}`, result.message);
+                } catch (error) {
+                    showMessage(`advisorContactMessage-${advisorId}`, error.message, "error");
+                } finally {
+                    button.disabled = false;
+                }
+            });
+        });
 
     } catch (error) {
         $("advisorList").textContent = error.message;
     }
 }
 
-/* =========================================
-   NOTIFICATIONS
-========================================= */
+
 
 async function loadNotifications() {
     try {
+        if (currentUser?.role === "admin") {
+            await loadNotificationSetupStatus();
+        }
         const endpoint =
             currentUser?.role === "admin"
                 ? "/api/admin/notifications"
@@ -976,6 +990,34 @@ async function loadNotifications() {
 
         $("notificationList").textContent =
             `Could not load notifications: ${error.message}`;
+    }
+}
+
+async function loadNotificationSetupStatus() {
+    const panel = $("notificationSetupStatus");
+    if (!panel) return;
+    try {
+        const data = await api("/api/admin/notification-status");
+        const renderChannel = (name, status) => `
+            <div class="notification-setup-channel">
+                <strong>${escapeHtml(name)}: ${status.ready ? "Ready" : "Not configured"}</strong>
+                <ul>${(status.messages || []).map((message) => `<li>${escapeHtml(message)}</li>`).join("")}</ul>
+            </div>`;
+        panel.innerHTML = `<h3>External alert setup</h3>${renderChannel("Gmail", data.email)}${data.email.test_ready ? '<button id="testGmailButton" class="secondary-btn" type="button">Send test email to sender account</button>' : ''}<div id="testGmailMessage" class="message" hidden></div>${renderChannel("WhatsApp", data.whatsapp)}`;
+        $("testGmailButton")?.addEventListener("click", async (event) => {
+            const button = event.currentTarget;
+            button.disabled = true;
+            try {
+                const result = await api("/api/admin/notifications/test-email", { method: "POST" });
+                showMessage("testGmailMessage", result.message);
+            } catch (error) {
+                showMessage("testGmailMessage", error.message, "error");
+            } finally {
+                button.disabled = false;
+            }
+        });
+    } catch (error) {
+        panel.textContent = `Could not check notification setup: ${error.message}`;
     }
 }
 
@@ -1045,9 +1087,7 @@ async function updateNotification(notificationId, changes) {
     }
 }
 
-/* =========================================
-   REFRESH BUTTONS AND BACKGROUND REFRESH
-========================================= */
+
 
 $("refreshBookings")?.addEventListener("click", loadBookings);
 
@@ -1074,9 +1114,7 @@ function startBackgroundRefresh() {
     }, 5000);
 }
 
-/* =========================================
-   LOGOUT
-========================================= */
+
 
 $("logoutBtn")?.addEventListener("click", async () => {
     try {
@@ -1090,8 +1128,6 @@ $("logoutBtn")?.addEventListener("click", async () => {
     window.location.href = "/";
 });
 
-/* =========================================
-   START APPLICATION
-========================================= */
+
 
 document.addEventListener("DOMContentLoaded", initializeApp);

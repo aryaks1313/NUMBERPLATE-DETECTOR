@@ -1,0 +1,651 @@
+NUMBER PLATE RECOGNITION PROJECT
+PLAIN ENGLISH CODE WALKTHROUGH
+
+Project: Number Plate Recognition at Service Gate
+Venue: Coastal Star, Nettoor
+Presentation: 23 November 2026, 3:30 PM
+
+HOW TO USE THIS GUIDE
+This guide follows the current project files. It explains imports, classes, functions, and main logic in simple English. It explains what the code does rather than repeating every punctuation mark. The source code is the final authority if a later code change makes this guide out of date.
+
+IMPORTANT CURRENT LIMITS
+The measured 32.6 FPS result is a warm detector-only benchmark on a still image. It does not measure camera capture, OCR, database search, and browser update together. The current uploaded-video processor samples about six frames per second. The full application has not been verified at 24 FPS. The ten unseen plate accuracy check has also not been completed, so the project must not claim 8 out of 10 yet.
+
+1. THE WHOLE PROJECT IN ONE MINUTE
+
+A camera or video provides images. OpenCV reads them. A YOLO model finds the plate rectangle. The program crops that rectangle. Tesseract OCR tries to read its letters and numbers. Plate helper functions clean and validate the text. The booking service searches today's booking records. FastAPI sends the result to the browser. The browser shows a plate image and, if found, the customer, appointment and advisor.
+
+The path is:
+Camera/video frame -> YOLO plate box -> plate crop -> OCR characters -> normalized Indian registration -> today's booking lookup -> saved detection and dashboard notification (for a database booking) -> browser result.
+
+A plate can fail at more than one point. The model may not find it. OCR may read a wrong character. The plate may be valid but have no booking for today. These are different outcomes and should be checked separately.
+
+2. PYTHON FILES
+
+2.1 app/main.py - the web application and connection point
+
+This central file creates the FastAPI application, connects the database and recognition services, defines the web API routes and coordinates the end-to-end result.
+
+Imports in main.py
+
+import os: reads environment settings such as admin login and camera source.
+import uuid: creates unique names for uploaded videos and saved images so one file does not overwrite another.
+import hmac: provides a timing-safe comparison for the admin login.
+import csv: reads rows when importing booking data.
+import io: wraps uploaded CSV text as an in-memory file for csv.DictReader.
+Path from pathlib: builds and checks file paths.
+datetime, timedelta, timezone, date, time: represent dates/times and calculate duplicate-detection windows.
+ZoneInfo: supplies time-zone support. The booking list uses Asia/Kolkata for today's date.
+load_dotenv: loads private local settings from .env.
+cv2: OpenCV reads/processes camera and video images and saves image files.
+FastAPI: creates the web API. Depends provides dependencies such as a database session. HTTPException returns controlled errors. Request reads the browser session. UploadFile and File receive uploaded files.
+StaticFiles and FileResponse: serve CSS/JavaScript/uploads and return whole HTML or CSV files.
+BaseModel: validates request data fields.
+case from SQLAlchemy: builds the upcoming-first booking sort.
+Session: identifies a database session type.
+SessionMiddleware: lets the server remember the signed-in user.
+Base, engine, get_db, SessionLocal: database setup and sessions.
+Advisor, Booking, Detection, Notification: database row classes.
+BookingCreateRequest: validates the booking form body.
+hash_password, verify_password, get_current_user, require_admin, require_advisor: password and access-control helpers.
+plate_detector: locates plate boxes. read_plate: runs OCR. normalize_plate, is_plausible_indian_plate, format_indian_plate, clean_indian_plate: prepare and validate registration text. find_booking: searches bookings. camera_monitor: manages live capture.
+
+Application setup
+Base.metadata.create_all(bind=engine) asks SQLAlchemy to create missing tables from the model definitions. It does not erase existing tables.
+FastAPI(title, version) creates the API application.
+BASE_DIR points to the project folder. STATIC_DIR, UPLOAD_DIR, VIDEO_DIR and DETECTION_DIR point to browser assets and generated files. mkdir(exist_ok=True) creates missing folders.
+app.mount('/static', ...) serves CSS and JavaScript. app.mount('/uploads', ...) serves generated preview images.
+SessionMiddleware stores the browser's login session. The secret must be private and stable for a real deployment. https_only=False is suited to local HTTP development; a public deployment should use HTTPS and secure cookies.
+
+Request classes
+LoginRequest has username and password fields. FastAPI checks that both exist in the login request.
+AdvisorCreateRequest has the name, username, password, phone and optional email needed to create an advisor.
+NotificationUpdateRequest allows an optional is_read value and/or status value. Optional fields let the browser change one property without resending every property.
+
+Page and health routes
+home() returns static/login.html when the browser requests '/'.
+dashboard_page() returns static/index.html at '/dashboard'.
+health() returns a small status answer at '/api/health'. It proves the API answers requests, not that camera, model and database recognition all work.
+
+login(data, request, db)
+1. Reads admin username/password settings from the private environment.
+2. Checks whether the input matches the admin credentials.
+3. If admin matches, clears the old session and stores role='admin' and username.
+4. Otherwise it searches for an active advisor with that username.
+5. verify_password compares the supplied password with the saved hash.
+6. If no valid account is found, returns HTTP 401.
+7. If the advisor is valid, clears the old session and stores advisor role and ID.
+8. Returns role and dashboard redirect location.
+
+logout(request) clears the browser session. It does not delete the user account.
+
+current_user(user) uses the login dependency and returns a safe summary of the current admin or advisor. It does not return the password hash.
+
+create_advisor(data, admin, db)
+1. Requires admin role.
+2. Checks whether the username already exists.
+3. Hashes the new password.
+4. Creates an active advisor row.
+5. Commits the database change and refreshes the row to get its ID.
+6. Returns the ID and username.
+
+list_advisors(admin, db) requires admin role, selects active advisors, sorts by name and returns fields needed by the dashboard.
+
+list_bookings(user, db)
+1. Starts a query for all bookings.
+2. If the user is an advisor, filters to bookings assigned to that advisor.
+3. Calculates today's date in India time.
+4. Sorts today and future bookings first in date/time order. Past bookings come after them in newest-first order.
+5. Converts date/time and related advisor into JSON-friendly values.
+
+booking_details(booking_id, user, db) gets one booking by ID. It returns 404 if missing. It returns 403 if an advisor tries to view another advisor's booking. Admin can view it.
+
+create_booking(data, admin, db)
+1. Requires admin role.
+2. Confirms the selected advisor exists and is active.
+3. Normalizes and validates the vehicle registration.
+4. Trims spaces around text fields.
+5. Saves date and time in the database format.
+6. Commits the booking and returns its ID.
+
+parse_booking_import_date(value) tries four date formats: YYYY-MM-DD, DD-MM-YYYY, DD/MM/YYYY and YYYY/MM/DD. If none works, it raises a helpful error. This is why a date like 23-11-2026 is accepted by the import route.
+
+download_booking_template(admin) returns the sample CSV as a download. It is admin-only.
+
+import_bookings_csv(file, admin, db)
+1. Requires admin and a .csv file. Excel .xlsx is not accepted directly.
+2. Reads at most 5 MB plus one byte to detect an oversized upload.
+3. Decodes UTF-8 with BOM support, covering common Excel CSV exports.
+4. Reads the first row as column headings.
+5. Checks required headings and requires advisor_id or advisor_name.
+6. Loads active advisors and creates lookup maps for ID and name.
+7. Goes through rows starting at row 2 because row 1 is the header.
+8. Cleans plate text, checks date, time, required details and advisor.
+9. Skips duplicate vehicle/date pairs already in the upload or database.
+10. Collects row errors. If any row is invalid, returns an error without applying the batch.
+11. Otherwise adds all new bookings and commits once.
+12. Returns counts for imported and duplicate rows skipped.
+
+advisor_dashboard(user, db) calculates the advisor's booking count, notification count, unread count, matched vehicle detections and latest ten notifications.
+
+advisor_notifications(user, db) returns notifications belonging to the signed-in advisor, newest first.
+
+mark_notification_read(notification_id, user, db) finds a notification owned by the advisor, marks it read and saves the change. It returns 404 when the notification is not available to that advisor.
+
+update_notification(notification_id, data, user, db)
+1. Finds the notification.
+2. Checks the current user owns it, unless the user is admin.
+3. If status was supplied, only accepts 'created' or 'completed'.
+4. Completing it also marks it read.
+5. If is_read was supplied, updates read/unread.
+6. Saves the changes.
+
+admin_dashboard(admin, db) counts advisors, bookings, detections and matched detections. It also returns camera monitor status.
+
+process_frame(frame, source, persist) - the recognition pipeline
+This function is used by live camera and video. It creates its own database session and then:
+1. Calls plate_detector.detect(frame).
+2. If it finds nothing, returns status 'no_plate'. No normal plate result is created.
+3. If multiple boxes exist, picks the one with highest detector confidence.
+4. Calls read_plate(crop) for OCR.
+5. Calls normalize_plate to remove spaces/punctuation and make letters uppercase.
+6. Builds a common result with text, display form, confidence, box and source.
+7. Returns 'invalid_plate' if the text is not a plausible Indian registration.
+8. Calls find_booking to search today's bookings.
+9. If a unique fuzzy match supplied the booking's true plate, updates the displayed registration.
+10. Returns 'unmatched' if the valid plate has no booking.
+11. A sample CSV booking has no database ID. The function returns customer/advisor details and can save an image, but does not create a database foreign-key row.
+12. If persist=False, as used for video, returns match details without writing detection/notification records for every sampled frame.
+13. For a database booking, checks if the same plate and booking were detected in the last ten minutes. If yes, returns 'duplicate'.
+14. Otherwise saves a frame image, creates a Detection row, creates an in-app dashboard Notification for the assigned advisor, commits both and returns the match.
+15. On an exception it rolls back and re-raises the error. finally always closes the database session.
+
+process_camera_frame(frame) calls process_frame with source='live'. It adapts the shared processing function for CameraMonitor.
+
+upload_video(video, admin)
+1. Allows MP4, AVI, MOV and MKV extensions.
+2. Saves the upload in chunks and stops above 200 MB.
+3. Opens it with OpenCV. If it cannot open, removes the bad file and returns an error.
+4. Reads video FPS and frame count to estimate duration.
+5. Selects frames at about six samples per second.
+6. Calls process_frame with persist=False for every sampled frame.
+7. Ignores no-plate, invalid-plate and other non-readable statuses.
+8. Keeps one best-confidence image/result for each unique valid plate.
+9. If a later frame has a booking match and an earlier frame did not, it carries the booking details into the retained result.
+10. Saves the best frame for each plate and returns counts, frame number, confidence and status.
+11. Releases video capture in finally so the file is closed even after an error.
+
+get_camera_source() reads CAMERA_SOURCE. A digits-only value becomes a camera index, such as integer 0. Other values stay as a URL or source string.
+
+start_monitor(admin) reads camera source and optional frame delay, then starts camera_monitor. Admin-only.
+stop_monitor(admin) tells the monitor to stop and release the camera. Admin-only.
+monitor_status(user) returns current camera status to a signed-in user.
+admin_notifications(admin, db) returns up to 100 newest notifications across advisors.
+
+2.2 app/config.py - application settings
+
+Imports: os reads environment settings. Path locates the project folder. load_dotenv loads the private local settings file.
+BASE_DIR points to the project root. load_dotenv reads .env there.
+Settings groups the configuration values:
+DATABASE_URL: database connection setting.
+YOLO_MODEL_PATH: trained model file path.
+YOLO_CONFIDENCE: detector threshold setting.
+YOLO_IMAGE_SIZE: input size used for inference.
+ROI_X1, ROI_Y1, ROI_X2 and ROI_Y2: relative region-of-interest coordinates from zero to one.
+TESSERACT_CMD: optional path to the Tesseract program.
+DUPLICATE_WINDOW_MINUTES: configured duplicate time window.
+settings = Settings() creates one object for other modules. Keep real values private.
+
+2.3 app/database.py - database connection
+
+Imports: create_engine connects SQLAlchemy to the database. sessionmaker creates sessions. declarative_base creates the parent for database models. settings provides the private connection string.
+engine = create_engine(...) creates the shared connection pool. pool_pre_ping checks whether a connection is still alive before using it.
+SessionLocal is a factory: SessionLocal() creates a session.
+Base is the common parent class for database models.
+get_db() creates a session, yields it to one route and closes it in finally. This prevents a request from leaving a database connection open.
+
+2.4 app/models.py - database table classes
+
+Imports: Column and SQLAlchemy types define fields. ForeignKey connects tables. relationship lets Python access linked records. func provides database functions such as current time. Base is the model parent.
+
+Advisor class, table 'advisors'
+id: unique row ID.
+name, username, password_hash, phone, email: advisor details and password hash.
+is_active: controls whether an advisor can sign in or receive assignments.
+bookings and notifications: relationships to rows owned by the advisor.
+
+Booking class, table 'bookings'
+id: unique row ID.
+customer_name, phone, vehicle_number, vehicle_model: customer/vehicle details.
+booking_date and booking_time: appointment date and time. Time is stored as text in this project.
+service_type and status: service details and appointment state.
+advisor_id: foreign key to the assigned advisor.
+advisor and detections: links to the advisor and related detections.
+
+Detection class, table 'detections'
+id: unique detection row ID.
+plate_number and ocr_text: cleaned result and original OCR output.
+confidence: model confidence score.
+image_path: saved image path.
+match_status: matched or unmatched state.
+booking_id: optional link to a booking.
+created_at: database-generated creation time.
+booking and notifications: relationships to booking and notifications.
+
+Notification class, table 'notifications'
+id: unique row ID.
+detection_id and advisor_id: foreign-key links.
+message and channel: notification text and channel label, such as the in-app dashboard.
+status: created or completed workflow state.
+is_read: read/unread state.
+created_at: creation time.
+detection and advisor: relationships back to related rows.
+
+A foreign key is an ID reference from one table to another. It prevents a detection from pointing to a booking that does not exist.
+
+2.5 app/schemas.py - incoming data checks
+
+Imports: date and time describe date/time values. BaseModel is Pydantic's validation parent. ConfigDict and Field configure object conversion and input limits.
+AdvisorCreate checks advisor name and phone lengths and allows optional email.
+BookingCreate defines booking fields and advisor ID. Pydantic checks date/time before the route runs.
+BookingOut adds an ID and allows building a response from a SQLAlchemy object using from_attributes=True.
+BookingCreateRequest is the version used by the booking creation route.
+
+2.6 app/security/auth.py - passwords and access control
+
+Imports: os reads environment values if needed. hmac safely compares hashes. hashlib calculates PBKDF2 password hashes. secrets creates random salts. Request reads session. HTTPException returns access errors. Depends connects FastAPI dependencies. Session and get_db access the database. Advisor is the advisor table.
+
+hash_password(password)
+1. Creates a random salt.
+2. Uses PBKDF2-HMAC with SHA-256 and 310,000 rounds to make a password hash.
+3. Returns salt and hash joined with '$'. The original password is not stored here.
+
+verify_password(password, stored_hash)
+1. Splits the saved salt and expected hash.
+2. Repeats the same PBKDF2 calculation for the entered password.
+3. Uses hmac.compare_digest to compare results.
+4. Returns False if the stored value is malformed.
+
+get_current_user(request, db)
+1. Reads user details from the session.
+2. Returns 401 if no session exists.
+3. Returns a small identity if role is admin.
+4. For an advisor, finds the database row and requires is_active=True.
+5. Clears the session and returns 401 if the advisor is missing/inactive.
+6. Rejects unknown roles.
+
+require_admin(user) checks role is admin or returns 403.
+require_advisor(user) checks role is advisor or returns 403.
+
+2.7 app/services/detector.py - finding the plate box
+
+Imports: Path and os find model path/CPU count. cv2 rotates images. torch controls PyTorch threads. YOLO loads the trained model. settings provides detector configuration.
+BASE_DIR calculates the project root. torch.set_num_threads limits inference threads to avoid CPU oversubscription.
+
+PlateDetector class
+__init__ sets model=None and resolves model path. A relative path becomes project-root-relative.
+load_model() returns an existing loaded model. Otherwise it checks the file, raises a clear missing-file error, loads YOLO once and returns it.
+apply_roi(image) converts relative ROI values into pixel coordinates, keeps them inside the image, crops the region and returns the crop plus its offset. Offsets are needed to map detection coordinates back to the full frame.
+
+detect(image)
+1. Loads YOLO and crops the ROI.
+2. Uses a minimum inference size of 224 pixels because smaller tested sizes lost plates.
+3. Uses a detector threshold no higher than 0.15 to help find dim/dirty plates. OCR validation filters bad text later.
+4. Tries original ROI, 90-degree counter-clockwise and clockwise rotations.
+5. Reads predicted box coordinates and confidence.
+6. Converts box coordinates back if image was rotated.
+7. Adds the ROI offset and clamps coordinates to the original image.
+8. Crops the box and returns box, confidence and crop.
+9. Stops after the first orientation that yields detections.
+
+plate_detector = PlateDetector() creates the shared detector object. The model loads the first time detection is requested.
+
+2.8 app/services/ocr.py - reading plate pixels
+
+Imports: Path checks Windows Tesseract locations. cv2 prepares image variants. pytesseract calls Tesseract. settings provides an optional executable path. clean_indian_plate validates and repairs OCR text.
+
+_configure_tesseract() uses TESSERACT_CMD if configured. Otherwise checks common Windows install folders and uses the first executable found.
+
+preprocess_plate(image)
+1. Returns no variants for an empty crop.
+2. Converts color image to grayscale.
+3. Enlarges a small crop with cubic interpolation.
+4. Applies bilateral denoising while preserving edges.
+5. Uses CLAHE to improve local contrast.
+6. Applies adaptive thresholding so text stands out.
+7. Returns enlarged, enhanced, thresholded and inverted versions.
+
+read_plate(image)
+1. Returns empty text if no crop exists.
+2. Rotates a tall crop clockwise so a plate is horizontal.
+3. Trims a small border from a wide plate crop.
+4. Restricts Tesseract to letters A-Z and digits 0-9.
+5. Reads each preprocessed version with OCR modes 8 and 7 for the first version and mode 8 for others.
+6. Cleans each OCR answer with clean_indian_plate.
+7. Returns blank if no answer resembles a valid Indian plate.
+8. Otherwise prefers 9-10 character registrations and longer valid text.
+
+PSM means page segmentation mode. It tells OCR what kind of text arrangement it should expect.
+
+2.9 app/services/plate_utils.py - cleaning registration text
+
+Imports: re supports regular expressions.
+_INDIAN_PLATE describes two state letters, one or two RTO digits, one to three series letters and four final digits.
+_DIGIT_FIX maps letters often mistaken for digits, such as O to 0 or I to 1.
+_LETTER_FIX maps digits often mistaken for letters, such as 0 to O or 8 to B.
+
+normalize_plate(value) uppercases text and removes everything except A-Z and 0-9. 'kl 07 ab-1234' becomes 'KL07AB1234'.
+
+clean_indian_plate(value)
+1. Normalizes the text.
+2. Creates the unchanged candidate.
+3. For the common two-digit RTO format, fixes digit positions and letter positions separately.
+4. For a one-digit RTO variation, uses the corresponding character positions.
+5. Returns the first candidate matching the pattern, or an empty string.
+
+format_indian_plate(value) cleans the text and adds spaces between state, RTO, series and final digits. If invalid, it returns normalized text for display.
+is_plausible_indian_plate(value) returns True only if cleanup validates it.
+
+2.10 app/services/booking_service.py - matching a registration
+
+Imports: csv reads fallback rows. date/datetime parse dates. Path locates the sample file. SimpleNamespace makes a lightweight booking-like object without saving a database row. ZoneInfo sets India time. Session, Advisor and Booking access database records. Plate helpers normalize text.
+
+INDIA_TZ is Asia/Kolkata. BASE_DIR locates the project. SAMPLE_BOOKINGS_PATH points to sample_bookings.csv.
+
+get_indian_today() returns today's date in India time.
+
+_one_edit_apart(first, second) compares strings character by character. It allows exactly one insertion, deletion or substitution. More than one edit returns False. The caller accepts a fuzzy match only if there is one unique candidate.
+
+_csv_bookings(db, today)
+1. Returns empty list if the sample CSV is missing.
+2. Opens UTF-8 CSV with BOM support.
+3. Keeps rows whose date equals today. This fallback parser expects YYYY-MM-DD.
+4. Looks up advisor by ID to get the current name when possible.
+5. Uses advisor name from CSV or a generic label if no database advisor exists.
+6. Creates lightweight booking-shaped objects and returns them.
+
+find_booking(db, plate_number)
+1. Cleans/normalizes recognized text.
+2. Returns no match for blank text.
+3. Loads today's database bookings.
+4. Looks for exact normalized plate first.
+5. If exact lookup fails, collects plates one edit away.
+6. Accepts fuzzy match only if there is exactly one candidate.
+7. If there are ambiguous candidates, does not guess.
+8. If no database match, checks exact and unique fuzzy match in today's sample CSV.
+9. Returns a database booking, CSV-backed object or None.
+
+2.11 app/services/monitor.py - live camera worker
+
+Imports: threading runs work in a separate worker. time provides waits. Path builds folders. cv2 opens camera and writes preview.
+
+CameraMonitor class
+__init__ creates running flag, thread, stop event, lock, error field, frame counter, last result and preview URL. It creates uploads/monitor and selects latest.jpg.
+
+start(camera_source, process_frame, interval)
+1. Locks shared state to avoid two concurrent starts.
+2. Returns an already-running message if needed.
+3. Clears stop signal and resets old status.
+4. Sets running=True.
+5. Starts a daemon thread that runs _run with camera source, processor and delay.
+
+_run(camera_source, process_frame, interval)
+1. Opens camera with OpenCV, or records an error if it cannot.
+2. Reads frames until stop_event is set.
+3. If read fails, stores an error and waits one second before retrying.
+4. Calls the shared recognition function.
+5. Copies frame, draws a rectangle if a box exists, adds status text and saves latest.jpg.
+6. Under a lock, updates frame count, last result, preview URL and error state.
+7. Records processing exceptions as last_error.
+8. Waits interval seconds if configured.
+9. Always releases the camera and marks stopped in finally.
+
+stop() sets the stop event, waits up to five seconds for worker exit, marks stopped and returns status.
+status() copies current values under a lock and returns them to the API.
+camera_monitor = CameraMonitor() creates the shared monitor.
+
+app/__init__.py and app/services/__init__.py are package marker files. They let Python import modules from these folders; they contain no recognition algorithm.
+
+3. BROWSER FILES
+
+3.1 static/login.html
+HTML defines the page title, character encoding, mobile viewport, brand, username/password inputs, sign-in button and error message. It loads style.css.
+
+The embedded JavaScript listens for form submit. preventDefault stops a normal page reload. It reads username/password and sends JSON to /api/login. It checks response.ok. On success, it opens the redirect URL from FastAPI. On failure, it shows the error in loginError.
+
+3.2 static/index.html
+This is the dashboard structure, not the recognition algorithm. It defines page sections and IDs that app.js finds. Main areas include overview counts, booking registration/list/details, CSV import, video upload/results, live monitor, advisor management and notifications. The admin-only class hides features from advisor accounts. It loads app.js after the page elements.
+
+An HTML id is a unique element name. For example, app.js looks up the form called bookingForm. CSS classes are shared style labels.
+
+3.3 static/app.js - browser behavior
+There are no imported packages in this JavaScript file. It uses browser built-ins such as document, fetch, FormData, Date and setInterval. 'use strict' enables stricter JavaScript rules.
+
+State values
+currentUser stores who signed in.
+monitorTimer and notificationTimer can store timer IDs. notificationTimer is used for periodic refresh.
+currentSection stores the open dashboard page.
+$ is a short helper for document.getElementById.
+
+api(url, options)
+1. Adds same-origin credentials so the session cookie reaches the server.
+2. Adds JSON content type for JSON bodies. It does not set this header for FormData because the browser must add the multipart boundary itself.
+3. Calls fetch.
+4. Reads JSON or plain text based on response content type.
+5. On 401, returns the browser to login.
+6. On other failures, reads the server error and throws a JavaScript Error.
+7. Returns response data for success.
+
+showMessage(elementId, message, type) finds an element, safely returns if missing, sets text and style class, then makes it visible.
+hideMessage(elementId) safely hides a message when the element exists.
+escapeHtml(value) replaces HTML-special characters so customer text displays safely as text.
+formatDate(value) formats dates in Indian locale, returning a dash for empty and original text if invalid.
+formatTime(value) formats hours/minutes in local time, returning original text if it does not match.
+statusClass(status) chooses a success/warning/danger/neutral visual class. It does not change stored status.
+
+showPage(sectionName)
+1. Finds the page section using its ID convention.
+2. Clears the old active state and updates nav button states.
+3. Activates the selected section and remembers its name.
+4. Updates the page title.
+5. Loads data needed for the selected page, such as bookings, notifications, advisors or camera state.
+
+initializeApp()
+1. Calls /api/me to learn the signed-in user.
+2. Shows a global error if the session is missing.
+3. Displays name, role and initials.
+4. Hides admin-only items from advisors.
+5. Sets today's date in the booking form.
+6. Loads active advisors for an admin booking form.
+7. Loads dashboard, bookings and notifications.
+8. Loads camera state for admin.
+9. Starts timed refresh and shows overview.
+
+showGlobalError(message) displays a top-level dashboard error if its element exists.
+
+Navigation event handlers listen to .nav-item and [data-go] buttons and call showPage with the relevant section name.
+
+loadDashboard() chooses admin or advisor endpoint, fills the overview counters and changes labels for advisor view. Errors are written to the browser console.
+
+loadAdvisorsForBooking() runs only for admin. It requests active advisors, clears the dropdown, creates an option for each advisor and handles empty/error states.
+
+Booking form submit handler
+1. Stops page reload and requires admin role.
+2. Reads the form and checks an advisor was selected.
+3. Builds a JSON booking payload.
+4. Disables the button while saving.
+5. POSTs to /api/bookings.
+6. Shows success, resets the form, restores today's date and reloads relevant data.
+7. Shows error and always re-enables the button.
+
+Booking CSV import handler stops page reload, checks admin and selected file, puts the file in FormData under key 'file', POSTs to /api/bookings/import, shows the result, resets and refreshes. It always restores the button. The field key must match the backend parameter.
+
+loadBookings() gets booking JSON and calls renderBookings and renderRecentBookings. If it fails, the table shows an error.
+
+renderBookings(bookings) handles empty lists, creates the booking table, formats values and attaches View click handlers. It uses escapeHtml for text.
+
+renderRecentBookings(bookings) shows the first five records from the already sorted API list.
+
+viewBooking(bookingId) gets one booking, creates labeled detail rows and opens the native HTML dialog. Errors appear in an alert.
+
+Close-dialog handler closes bookingDialog.
+
+Video file change handler shows selected filename and size.
+
+Video form submit handler
+1. Stops page reload and checks admin/file.
+2. Places video in FormData under key 'video'.
+3. Shows progress and disables the button.
+4. POSTs to /api/video/upload.
+5. Calls renderVideoResults and reloads dashboard/notifications.
+6. Shows server errors if needed.
+7. Restores button and hides progress in finally.
+
+renderVideoResults(result) shows recognized, matched and unmatched counts. If there are no valid plates, it shows one empty message. Otherwise it makes one row per unique plate with status, booking information, confidence, frame number and best-frame thumbnail.
+
+safeLocalUploadUrl(path) accepts only local /uploads/ or /static/ paths. It prevents arbitrary external image links being inserted.
+formatConfidence(value) turns a valid fraction/percentage into readable percent text or a dash.
+
+Start-monitor handler POSTs /api/monitor/start, shows the response and reloads status.
+Stop-monitor handler POSTs /api/monitor/stop and reloads status.
+showMonitorMessage(message, type) displays camera status/error text.
+
+loadMonitorStatus()
+1. Runs only for admin.
+2. Requests /api/monitor/status.
+3. Shows running/stopped and frame count.
+4. Shows a camera error if present.
+5. If an image exists, adds a timestamp query parameter so browser cache does not show an old JPEG.
+6. Calls renderLiveRecognition for the last frame result.
+
+renderLiveRecognition(data) fills status, plate, OCR text, confidence, matched customer, appointment time, model, advisor and service fields. Missing values get clear fallback text.
+
+Advisor form handler sends advisor details to /api/advisors, clears the form and reloads advisor lists after success.
+loadAdvisors() gets active advisors and displays name, username, contact and active state.
+
+loadNotifications() selects the admin/advisor notification endpoint and calls renderNotifications.
+renderNotifications(notifications) shows notification content plus read/unread and completed/open labels. It adds buttons to toggle read and complete state.
+updateNotification(notificationId, changes) PATCHes the change to /api/notifications/{id}, then reloads notification/dashboard data. It displays errors in an alert.
+
+Refresh button handlers call loadBookings or loadNotifications.
+startBackgroundRefresh() clears an old timer and refreshes the dashboard every five seconds. It refreshes the currently visible bookings, notifications or admin camera page as needed.
+Logout handler POSTs /api/logout and navigates to login.
+DOMContentLoaded handler starts initializeApp after HTML elements exist.
+
+3.4 static/style.css - visual appearance
+CSS does not detect plates. It controls colors, fonts, layout, spacing, tables, forms and responsive behavior. :root stores reusable color variables. Body and button/input rules set defaults. Sidebar/topbar/page-section rules arrange the dashboard. Table/form classes style booking content. Status-pill variants show colored states. Camera and video classes size previews and thumbnails. The @media rule changes the layout on narrow phone screens.
+
+4. MODEL AND DATA FILES
+
+models/best.pt is a trained YOLO weights file, not readable Python source. detector.py loads it. The original training dataset and training notebook are not in this project, so the training process cannot be reconstructed from the current files alone.
+
+sample_bookings.csv is a text table of demo bookings. The first row is headings. Later rows contain a customer, plate, date/time, service and advisor. Importing rows creates database Booking records. booking_service.py can also use the CSV as a fallback. Fallback dates should use YYYY-MM-DD.
+
+uploads/ contains uploaded videos and generated camera/detection images. Treat real customer images as private.
+
+.env stores machine-specific settings and secrets. config.py and main.py load them. Never share its values.
+
+requirements.txt lists Python packages:
+fastapi: web API framework.
+uvicorn[standard]: web server for FastAPI.
+sqlalchemy: database object mapping.
+psycopg2-binary: PostgreSQL driver.
+python-multipart: receives uploaded forms/files. This requirement appears twice; duplicate is harmless but could be removed.
+ultralytics: YOLO model library.
+opencv-python: image/video operations.
+pytesseract: Python wrapper for Tesseract OCR.
+numpy: numerical arrays used by image/model processing.
+pandas: data tables; may not be used on every current path.
+python-dotenv: loads private local settings.
+itsdangerous: supports signed session cookies through Starlette middleware.
+
+create_advisor_logins.py uses getpass so passwords are not shown while typing, database session, Advisor model and hash_password. It visits each advisor, asks for a new temporary password, hashes it, activates the account and commits. finally closes the session.
+
+create_demo_account.py gets a database session, searches for a demo advisor, updates or creates the row, hashes a demo password and commits. The source includes a demonstration password. Change it before sharing or deploying. Do not copy it into public material.
+
+task.py currently only prints a small test message. It does not start recognition.
+task.ipynb is a Jupyter notebook and is not imported by the running web app. If it has no meaningful cells, it is not active application code.
+app/__init__.py and app/services/__init__.py are package marker files and contain no recognition logic.
+
+5. PYTHON WORDS IN SIMPLE ENGLISH
+
+Import: use code from another package or project file.
+Class: a description/template for creating related objects, such as Advisor.
+Object: one working instance made from a class.
+Function: named instructions that can be called.
+Parameter: information passed into a function.
+Return: the answer a function sends back.
+Decorator such as @app.get: tells FastAPI which URL and HTTP method call a function.
+Database session: a short-lived connection used to read/write rows.
+Exception: an error signal that interrupts normal work until handled.
+try/except/finally: try the work, handle errors, always perform cleanup.
+JSON: text format used to send named values between browser and server.
+HTTP 200: request worked. 400: bad request data. 401: login required/invalid. 403: signed-in role is not allowed. 404: record not found. 413: upload too large.
+
+6. HOW TO TRACE A RESULT
+
+If nothing is detected, inspect detector.detect: did YOLO return boxes? Check the camera image and camera source.
+If a box exists but no text, inspect the crop and read_plate preprocessing/Tesseract path.
+If text exists but is invalid, check clean_indian_plate and its registration pattern.
+If the plate is valid but unmatched, check find_booking, today's date in India and booking vehicle_number.
+If the API result is correct but the screen is wrong, inspect the static/app.js rendering function and matching IDs in static/index.html.
+
+If a match came from the sample CSV, process_frame returns it for the screen but does not create database Detection or Notification rows. Database bookings can create those records when persist=True and the duplicate-window check passes.
+
+7. COMMON PROBLEMS AND SIMPLE FIXES
+
+CSV says Invalid isoformat string: '23-11-2026'
+Use the CSV import screen with its current date parser, which accepts DD-MM-YYYY. For sample_bookings.csv fallback, use YYYY-MM-DD. Check headings against the downloaded template.
+
+Cannot read properties of null (reading 'reset')
+JavaScript tried to reset an HTML form that was not present. Check the element ID and check the form exists before reset. Reload the latest app.js after a fix.
+
+Camera opens but shows no plate
+An open camera only proves OpenCV can read images. Aim it at a vehicle plate. Use the correct camera source and enough light, focus and plate size. A room image has no plate, so no plate result is expected.
+
+Video shows no result
+Use a supported video and keep the plate visible in several frames. The system samples about six frames per second. Check orientation, model path and lighting. A valid Indian plate format is required for a result card.
+
+Wrong OCR characters
+The code fixes common confusions by character position, but cannot guarantee every dirty/angled plate. Improve focus/light and collect gate examples for future tuning.
+
+Booking does not match
+Check the plate, today's date in India, active advisor and whether the booking is in the database or correct fallback CSV. Exact match is preferred. Fuzzy match is accepted only if there is one unique candidate.
+
+YOLO model missing
+Confirm models/best.pt exists and the configured model path points to it.
+
+Tesseract executable missing
+Install Tesseract or set its path in the private TESSERACT_CMD setting, then restart the server.
+
+Database cannot connect
+Check database service and private connection setting. Do not paste the connection string into chat or public source files.
+
+Video upload rejected
+Use MP4, AVI, MOV or MKV, below 200 MB. Check that the video plays normally before upload.
+
+401 or 403
+Sign in again for 401. For 403, use the correct account role or ask an admin to activate the advisor.
+
+Notification buttons do nothing
+Refresh, verify sign-in and check browser/API errors. The server supports read/unread and created/completed. Completed notifications are marked read automatically.
+
+8. DEMO EXPLANATION FOR THE EVALUATOR
+
+Say: 'I will upload a prepared gate video. The application samples frames, detects plate areas, reads text, cleans it and looks for today's booking. The screen shows recognized plate results, with one best frame for each plate.'
+
+When the sample match appears, say: 'This is the detected plate. The application found a matching sample booking, so it displays the customer, appointment and advisor.'
+
+When a plate does not match, say: 'The plate was read, but there is no booking for it today.'
+
+When no plate appears, say: 'There was no readable plate in this scene, so the application does not add a recognition result.'
+
+If asked about speed, say: 'The 32.6 FPS figure is for the warmed detector on a still image. Video processing currently samples about six frames each second. The full application has not yet been measured at 24 FPS.'
+
+If asked about accuracy, say: 'The application has not yet been formally tested on ten unseen plate examples. I will record the exact result after that test. I will not claim the 8 out of 10 target until measured.'
+
+9. SHORT SUMMARY TO MEMORIZE
+
+OpenCV gets the frame. YOLO finds the plate. Tesseract reads it. Plate utilities clean it. Booking service searches for today's appointment. FastAPI sends the result. JavaScript displays it. The database stores advisors, bookings, detections and notifications.
+
+This guide covers all active project files, imports, classes, functions, route handlers and main logic in the current source. It cannot explain the internal learned values in best.pt or generated uploads as source code because those are binary/image/video data.

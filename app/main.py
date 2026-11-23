@@ -3,6 +3,7 @@ import uuid
 import hmac
 import csv
 import io
+import time as clock_time
 
 from pathlib import Path
 from datetime import datetime, timedelta, timezone, date, time
@@ -15,14 +16,7 @@ load_dotenv(BASE_DIR / ".env")
 
 import cv2
 
-from fastapi import (
-    FastAPI,
-    Depends,
-    HTTPException,
-    Request,
-    UploadFile,
-    File
-)
+from fastapi import (FastAPI,Depends,HTTPException,Request,UploadFile,File)
 
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -32,39 +26,30 @@ from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.database import Base, engine, get_db, SessionLocal
+from app.config import settings
 from app.models import Advisor, Booking, Detection, Notification
 from app.schemas import BookingCreateRequest
 
-from app.security.auth import (
-    hash_password,
-    verify_password,
-    get_current_user,
-    require_admin,
-    require_advisor
-)
+from app.security.auth import (hash_password,verify_password,get_current_user,require_admin,require_advisor)
 
 from app.services.detector import plate_detector
-from app.services.ocr import read_plate
-from app.services.plate_utils import (
-    normalize_plate,
-    is_plausible_indian_plate,
-    format_indian_plate,
-    clean_indian_plate,
+from app.services.ocr import read_plate_result
+from app.services.plate_utils import (normalize_plate,is_plausible_indian_plate,format_indian_plate,clean_indian_plate,)
+from app.services.booking_service import (
+    INDIA_TZ,
+    count_advisor_slot_bookings,
+    find_available_advisor,
+    find_booking,
+    get_indian_today,
+    slot_index,
 )
-from app.services.booking_service import find_booking
 from app.services.monitor import camera_monitor
-
-
-# --------------------------------------------------
-# APPLICATION
-# --------------------------------------------------
+from app.services.messaging import queue_advisor_notifications, send_test_email
+from app.services.google_oauth import gmail_oauth_status
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(
-    title="Coastal Star Service Gate Intelligence",
-    version="3.0"
-)
+app = FastAPI(title="Coastal Star Service Gate Intelligence",version="3.0")
 
 STATIC_DIR = BASE_DIR / "static"
 UPLOAD_DIR = BASE_DIR / "uploads"
@@ -76,17 +61,9 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 VIDEO_DIR.mkdir(exist_ok=True)
 DETECTION_DIR.mkdir(exist_ok=True)
 
-app.mount(
-    "/static",
-    StaticFiles(directory=str(STATIC_DIR)),
-    name="static"
-)
+app.mount("/static",StaticFiles(directory=str(STATIC_DIR)),name="static")
 
-app.mount(
-    "/uploads",
-    StaticFiles(directory=str(UPLOAD_DIR)),
-    name="uploads"
-)
+app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)),name="uploads")
 
 app.add_middleware(
     SessionMiddleware,
@@ -99,9 +76,6 @@ app.add_middleware(
 )
 
 
-# --------------------------------------------------
-# REQUEST SCHEMAS
-# --------------------------------------------------
 
 class LoginRequest(BaseModel):
     username: str
@@ -121,9 +95,12 @@ class NotificationUpdateRequest(BaseModel):
     status: str | None = None
 
 
-# --------------------------------------------------
-# HOME
-# --------------------------------------------------
+class AdvisorContactUpdateRequest(BaseModel):
+    phone: str
+    email: str | None = None
+
+
+
 
 @app.get("/")
 def home():
@@ -143,9 +120,6 @@ def health():
     }
 
 
-# --------------------------------------------------
-# LOGIN
-# --------------------------------------------------
 
 @app.post("/api/login")
 def login(
@@ -157,7 +131,7 @@ def login(
     admin_username = os.getenv("ADMIN_USERNAME", "admin")
     admin_password = os.getenv("ADMIN_PASSWORD", "")
 
-    # Admin login
+
     if (
         hmac.compare_digest(data.username, admin_username)
         and admin_password
@@ -177,7 +151,7 @@ def login(
             "redirect": "/dashboard"
         }
 
-    # Advisor login
+
     advisor = db.query(Advisor).filter(
         Advisor.username == data.username,
         Advisor.is_active == True
@@ -209,9 +183,7 @@ def login(
     }
 
 
-# --------------------------------------------------
-# LOGOUT
-# --------------------------------------------------
+
 
 @app.post("/api/logout")
 def logout(request: Request):
@@ -223,9 +195,7 @@ def logout(request: Request):
     }
 
 
-# --------------------------------------------------
-# CURRENT USER
-# --------------------------------------------------
+
 
 @app.get("/api/me")
 def current_user(user=Depends(get_current_user)):
@@ -247,10 +217,7 @@ def current_user(user=Depends(get_current_user)):
     }
 
 
-# --------------------------------------------------
-# CREATE ADVISOR
-# ADMIN ONLY
-# --------------------------------------------------
+
 
 @app.post("/api/advisors")
 def create_advisor(
@@ -313,9 +280,93 @@ def list_advisors(
     ]
 
 
-# --------------------------------------------------
-# BOOKINGS
-# --------------------------------------------------
+@app.patch("/api/advisors/{advisor_id}/contact")
+def update_advisor_contact(
+    advisor_id: int,
+    data: AdvisorContactUpdateRequest,
+    admin=Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    advisor = db.query(Advisor).filter(Advisor.id == advisor_id).first()
+    if advisor is None:
+        raise HTTPException(status_code=404, detail="Advisor not found.")
+
+    phone = data.phone.strip()
+    phone_digits = "".join(character for character in phone if character.isdigit())
+    if len(phone_digits) not in (10, 12) or (len(phone_digits) == 12 and not phone_digits.startswith("91")):
+        raise HTTPException(
+            status_code=400,
+            detail="Enter a 10-digit Indian mobile number, optionally with +91.",
+        )
+    advisor.phone = phone
+    advisor.email = (data.email or "").strip() or None
+    db.commit()
+    return {"message": "Advisor contact details updated.", "advisor_id": advisor.id}
+
+
+@app.get("/api/admin/notification-status")
+def admin_notification_status(
+    admin=Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    active_advisors = db.query(Advisor).filter(Advisor.is_active == True).all()
+    email_missing = []
+    if not settings.EMAIL_ENABLED:
+        email_missing.append("Set EMAIL_ENABLED=true in .env.")
+    oauth_status = gmail_oauth_status() if settings.EMAIL_AUTH_METHOD == "oauth" else None
+    if oauth_status:
+        email_missing.extend(oauth_status["messages"] if not oauth_status["ready"] else [])
+    else:
+        if not settings.SMTP_USERNAME:
+            email_missing.append("Set SMTP_USERNAME to the sending Gmail account.")
+        if not settings.SMTP_PASSWORD:
+            email_missing.append("Set SMTP_PASSWORD to a Google App Password.")
+    if not any(advisor.email for advisor in active_advisors):
+        email_missing.append("Save a recipient email on the assigned advisor.")
+
+    whatsapp_missing = []
+    if not settings.WHATSAPP_ENABLED:
+        whatsapp_missing.append("Set WHATSAPP_ENABLED=true in .env.")
+    if not settings.WHATSAPP_ACCESS_TOKEN:
+        whatsapp_missing.append("Set the WhatsApp Cloud API access token.")
+    if not settings.WHATSAPP_PHONE_NUMBER_ID:
+        whatsapp_missing.append("Set the WhatsApp Business phone number ID.")
+    if not settings.WHATSAPP_TEMPLATE_NAME:
+        whatsapp_missing.append("Set an approved WhatsApp template name.")
+
+    return {
+        "email": {
+            "ready": not email_missing,
+            "enabled": settings.EMAIL_ENABLED,
+            "test_ready": bool(
+                settings.EMAIL_ENABLED
+                and (
+                    oauth_status["ready"] if oauth_status else
+                    settings.SMTP_USERNAME and settings.SMTP_PASSWORD
+                )
+            ),
+            "messages": email_missing or ["Gmail alerts are configured."],
+        },
+        "whatsapp": {
+            "ready": not whatsapp_missing,
+            "enabled": settings.WHATSAPP_ENABLED,
+            "messages": whatsapp_missing or ["WhatsApp alerts are configured."],
+        },
+    }
+
+
+@app.post("/api/admin/notifications/test-email")
+def send_admin_test_email(
+    admin=Depends(require_admin),
+):
+    try:
+        recipient = send_test_email()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"message": f"Test email sent to {recipient}. Check Inbox and Spam."}
+
+
+
 
 @app.get("/api/bookings")
 def list_bookings(
@@ -401,10 +452,7 @@ def booking_details(
     }
 
 
-# --------------------------------------------------
-# REGISTER BOOKING
-# ADMIN ONLY
-# --------------------------------------------------
+
 
 @app.post("/api/bookings")
 def create_booking(
@@ -436,6 +484,19 @@ def create_booking(
             detail="Invalid vehicle registration number."
         )
 
+    used_slots = count_advisor_slot_bookings(
+        db, advisor.id, data.booking_date, data.booking_time
+    )
+    if used_slots >= settings.BOOKINGS_PER_ADVISOR_SLOT:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"No booking slot remains for {advisor.name} in this "
+                f"{settings.BOOKING_SLOT_MINUTES}-minute time slot. "
+                f"The limit is {settings.BOOKINGS_PER_ADVISOR_SLOT} vehicles."
+            ),
+        )
+
     booking = Booking(
         customer_name=data.customer_name.strip(),
         phone=data.phone.strip(),
@@ -443,7 +504,7 @@ def create_booking(
         vehicle_model=data.vehicle_model.strip(),
         booking_date=data.booking_date,
 
-        # Model column is String
+
         booking_time=data.booking_time.strftime("%H:%M"),
 
         service_type=data.service_type.strip(),
@@ -524,6 +585,7 @@ def import_bookings_csv(
     advisors_by_name = {advisor.name.strip().casefold(): advisor for advisor in advisors}
     new_bookings = []
     seen = set()
+    pending_slot_counts = {}
     skipped = 0
     errors = []
 
@@ -561,6 +623,19 @@ def import_bookings_csv(
                 seen.add(key)
                 continue
             seen.add(key)
+            status = row.get("status") or "Scheduled"
+            if status.strip().lower() not in {"cancelled", "canceled", "completed", "closed"}:
+                slot_key = (advisor.id, booking_date, slot_index(booking_time))
+                used = count_advisor_slot_bookings(
+                    db, advisor.id, booking_date, booking_time
+                ) + pending_slot_counts.get(slot_key, 0)
+                if used >= settings.BOOKINGS_PER_ADVISOR_SLOT:
+                    raise ValueError(
+                        f"no slot remains for advisor {advisor.name} in this "
+                        f"{settings.BOOKING_SLOT_MINUTES}-minute slot "
+                        f"(capacity {settings.BOOKINGS_PER_ADVISOR_SLOT})"
+                    )
+                pending_slot_counts[slot_key] = pending_slot_counts.get(slot_key, 0) + 1
             new_bookings.append(Booking(
                 customer_name=row["customer_name"],
                 phone=row["phone"],
@@ -569,7 +644,7 @@ def import_bookings_csv(
                 booking_date=booking_date,
                 booking_time=booking_time.strftime("%H:%M"),
                 service_type=row["service_type"],
-                status=row.get("status") or "Scheduled",
+                status=status,
                 advisor_id=advisor.id,
             ))
         except (KeyError, ValueError) as exc:
@@ -592,9 +667,7 @@ def import_bookings_csv(
     }
 
 
-# --------------------------------------------------
-# ADVISOR DASHBOARD
-# --------------------------------------------------
+
 
 @app.get("/api/advisor/dashboard")
 def advisor_dashboard(
@@ -654,9 +727,7 @@ def advisor_dashboard(
     }
 
 
-# --------------------------------------------------
-# ADVISOR NOTIFICATIONS
-# --------------------------------------------------
+
 
 @app.get("/api/advisor/notifications")
 def advisor_notifications(
@@ -751,9 +822,6 @@ def update_notification(
     return {"message": "Notification updated."}
 
 
-# --------------------------------------------------
-# ADMIN DASHBOARD
-# --------------------------------------------------
 
 @app.get("/api/admin/dashboard")
 def admin_dashboard(
@@ -772,10 +840,81 @@ def admin_dashboard(
     }
 
 
-# --------------------------------------------------
-# DETECTION ENGINE
-# USED BY LIVE CAMERA AND VIDEO
-# --------------------------------------------------
+
+
+def _save_detection_and_notification(db, result, advisor, booking_id):
+    detection = Detection(
+        plate_number=normalize_plate(result.get("plate_number")),
+        ocr_text=result.get("ocr_text"),
+        confidence=float(result.get("confidence") or 0),
+        image_path=result.get("image_path"),
+        match_status="matched",
+        booking_id=booking_id,
+    )
+    db.add(detection)
+    db.flush()
+    message = (
+        "New service gate arrival\n"
+        f"Vehicle: {result.get('plate_display') or result.get('plate_number')}\n"
+        f"Customer: {result.get('customer_name') or 'Walk-in customer'}\n"
+        f"Vehicle model: {result.get('vehicle_model') or 'Unknown vehicle'}\n"
+        f"Appointment: {result.get('booking_time') or 'Walk-in'}\n"
+        f"Service: {result.get('service_type') or 'Walk-in service'}\n"
+        f"Service advisor: {advisor.name}\n"
+        "Please prepare for customer arrival."
+    )
+    db.add(Notification(
+        detection_id=detection.id,
+        advisor_id=advisor.id,
+        message=message,
+        channel="dashboard",
+        status="created",
+    ))
+    return message
+
+
+def _assign_walk_in(db, frame, result):
+    now = datetime.now(INDIA_TZ)
+    booking_date = now.date()
+    booking_time = now.strftime("%H:%M")
+    advisor = find_available_advisor(db, booking_date, booking_time)
+    if advisor is None:
+        return None
+
+    booking = Booking(
+        customer_name="Walk-in customer",
+        phone="Not provided",
+        vehicle_number=normalize_plate(result["plate_number"]),
+        vehicle_model="Unknown vehicle",
+        booking_date=booking_date,
+        booking_time=booking_time,
+        service_type="Walk-in service",
+        status="Walk-in",
+        advisor_id=advisor.id,
+    )
+    db.add(booking)
+    db.flush()
+
+    filename = f"{uuid.uuid4().hex}.jpg"
+    image_path = DETECTION_DIR / filename
+    cv2.imwrite(str(image_path), frame)
+    result.update({
+        "status": "walk_in_assigned",
+        "booking_id": booking.id,
+        "customer_name": booking.customer_name,
+        "vehicle_model": booking.vehicle_model,
+        "advisor": advisor.name,
+        "advisor_id": advisor.id,
+        "booking_time": booking_time,
+        "service_type": booking.service_type,
+        "image_path": f"/uploads/detections/{filename}",
+        "message": f"No appointment was found. Walk-in assigned to {advisor.name}.",
+    })
+    message = _save_detection_and_notification(db, result, advisor, booking.id)
+    db.commit()
+    queue_advisor_notifications(advisor, {**result, "message": message})
+    return result
+
 
 def process_frame(frame, source="live", persist=True):
 
@@ -808,8 +947,22 @@ def process_frame(frame, source="live", persist=True):
 
         box = best["box"]
 
-        ocr_text = read_plate(plate_crop)
+        if confidence < settings.PLATE_MIN_DETECTION_CONFIDENCE:
+            return {
+                "status": "low_confidence",
+                "plate_number": None,
+                "plate_display": None,
+                "ocr_text": None,
+                "confidence": float(confidence),
+                "ocr_confidence": 0.0,
+                "box": box,
+                "source": source,
+                "message": "Plate detection confidence is below the minimum.",
+            }
 
+        ocr_result = read_plate_result(plate_crop)
+        ocr_text = ocr_result["text"]
+        ocr_confidence = float(ocr_result["confidence"] or 0)
         plate_number = normalize_plate(ocr_text)
 
         common_result = {
@@ -822,11 +975,26 @@ def process_frame(frame, source="live", persist=True):
 
             "confidence": float(confidence),
 
+            "ocr_confidence": ocr_confidence,
+
             "box": box,
 
             "source": source
 
         }
+
+        if (
+            confidence < settings.PLATE_MIN_DETECTION_CONFIDENCE
+            or ocr_confidence < settings.OCR_MIN_CONFIDENCE
+        ):
+            return {
+                **common_result,
+                "status": "low_confidence",
+                "message": (
+                    "Plate is hidden because detection or OCR confidence "
+                    "is below the configured minimum."
+                ),
+            }
 
         if not is_plausible_indian_plate(plate_number):
 
@@ -852,41 +1020,69 @@ def process_frame(frame, source="live", persist=True):
             common_result["plate_display"] = format_indian_plate(plate_number)
 
         if not booking:
-
-            return {
-
+            unmatched = {
                 **common_result,
-
                 "status": "unmatched",
-
-                "message": (
-                    "Valid plate detected, "
-                    "but no booking was found."
-                )
-
+                "message": "Valid plate detected, but no booking was found.",
             }
+            if persist:
+                assigned = _assign_walk_in(db, frame, unmatched)
+                if assigned:
+                    return assigned
+                unmatched["message"] = (
+                    "Valid plate detected, but all advisor slots are full."
+                )
+            return unmatched
 
-        # CSV-backed demo bookings do not have database IDs. Save the frame
-        # and return the full match for the recognition screen without trying
-        # to write a foreign-key reference into the production tables.
+
         if booking.id is None:
             image_path = None
             if persist:
                 filename = f"{uuid.uuid4().hex}.jpg"
                 cv2.imwrite(str(DETECTION_DIR / filename), frame)
                 image_path = f"/uploads/detections/{filename}"
-            return {
+            sample_result = {
                 **common_result,
                 "status": "matched",
                 "booking_id": None,
                 "customer_name": booking.customer_name,
                 "vehicle_model": booking.vehicle_model,
                 "advisor": booking.advisor.name,
+                "advisor_id": booking.advisor.id,
                 "booking_time": str(booking.booking_time),
                 "service_type": booking.service_type,
                 "image_path": image_path,
                 "message": "Sample CSV booking successfully matched.",
             }
+            if persist:
+                recent_cutoff = datetime.now(timezone.utc) - timedelta(
+                    minutes=settings.DUPLICATE_WINDOW_MINUTES
+                )
+                recent_csv_match = db.query(Detection).filter(
+                    Detection.plate_number == plate_number,
+                    Detection.booking_id.is_(None),
+                    Detection.created_at >= recent_cutoff,
+                ).first()
+                if recent_csv_match:
+                    sample_result.update({
+                        "status": "duplicate",
+                        "message": "This vehicle was recently detected.",
+                    })
+                    return sample_result
+
+                advisor = db.query(Advisor).filter(
+                    Advisor.id == booking.advisor_id,
+                    Advisor.is_active == True,
+                ).first()
+                if advisor:
+                    message = _save_detection_and_notification(
+                        db, sample_result, advisor, None
+                    )
+                    db.commit()
+                    queue_advisor_notifications(
+                        advisor, {**sample_result, "message": message}
+                    )
+            return sample_result
 
         if not persist:
             return {
@@ -896,6 +1092,7 @@ def process_frame(frame, source="live", persist=True):
                 "customer_name": booking.customer_name,
                 "vehicle_model": booking.vehicle_model,
                 "advisor": booking.advisor.name,
+                "advisor_id": booking.advisor.id,
                 "booking_time": str(booking.booking_time),
                 "service_type": booking.service_type,
                 "message": "Booking successfully matched.",
@@ -1006,6 +1203,16 @@ def process_frame(frame, source="live", persist=True):
 
         db.commit()
 
+        queue_advisor_notifications(advisor, {
+            **common_result,
+            "customer_name": booking.customer_name,
+            "vehicle_model": booking.vehicle_model,
+            "advisor": advisor.name,
+            "booking_time": str(booking.booking_time),
+            "service_type": booking.service_type,
+            "message": message,
+        })
+
         return {
 
             **common_result,
@@ -1019,6 +1226,8 @@ def process_frame(frame, source="live", persist=True):
             "vehicle_model": booking.vehicle_model,
 
             "advisor": advisor.name,
+
+            "advisor_id": advisor.id,
 
             "booking_time": str(booking.booking_time),
 
@@ -1051,10 +1260,88 @@ def process_camera_frame(frame):
     )
 
 
-# --------------------------------------------------
-# VIDEO UPLOAD
-# ADMIN ONLY
-# --------------------------------------------------
+
+
+def persist_video_result(result):
+    """Persist one best video frame, notify an advisor, or assign a walk-in."""
+    original_status = result.get("status")
+    if original_status not in ("matched", "unmatched"):
+        return False
+
+    plate_number = normalize_plate(result.get("plate_number"))
+    if not plate_number:
+        return False
+
+    db = SessionLocal()
+    try:
+        booking_id = result.get("booking_id")
+        booking = None
+        if booking_id is not None:
+            booking = db.query(Booking).filter(Booking.id == booking_id).first()
+
+        if original_status == "unmatched":
+            now = datetime.now(INDIA_TZ)
+            booking_time = now.strftime("%H:%M")
+            advisor = find_available_advisor(db, now.date(), booking_time)
+            if advisor is None:
+                return False
+            booking = Booking(
+                customer_name="Walk-in customer",
+                phone="Not provided",
+                vehicle_number=plate_number,
+                vehicle_model="Unknown vehicle",
+                booking_date=now.date(),
+                booking_time=booking_time,
+                service_type="Walk-in service",
+                status="Walk-in",
+                advisor_id=advisor.id,
+            )
+            db.add(booking)
+            db.flush()
+            booking_id = booking.id
+            result.update({
+                "status": "walk_in_assigned",
+                "booking_id": booking.id,
+                "customer_name": booking.customer_name,
+                "vehicle_model": booking.vehicle_model,
+                "advisor": advisor.name,
+                "advisor_id": advisor.id,
+                "booking_time": booking_time,
+                "service_type": booking.service_type,
+                "message": f"No appointment was found. Walk-in assigned to {advisor.name}.",
+            })
+        else:
+            advisor_id = booking.advisor_id if booking else result.get("advisor_id")
+            advisor = db.query(Advisor).filter(
+                Advisor.id == advisor_id,
+                Advisor.is_active == True,
+            ).first()
+            if advisor is None:
+                return False
+
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
+        recent = db.query(Detection).filter(
+            Detection.plate_number == plate_number,
+            Detection.booking_id == (booking.id if booking else None),
+            Detection.created_at >= cutoff,
+        ).first()
+        if recent:
+            db.rollback()
+            return False
+
+        result["image_path"] = result.get("image_path")
+        message = _save_detection_and_notification(
+            db, result, advisor, booking.id if booking else None
+        )
+        db.commit()
+        queue_advisor_notifications(advisor, {**result, "message": message})
+        return True
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
 
 @app.post("/api/video/upload")
 def upload_video(
@@ -1141,15 +1428,16 @@ def upload_video(
         if fps and fps > 0 else 0
     )
 
-    # Sample up to six frames per second so a short gate arrival is less likely
-    # to fall between sampled frames while keeping OCR cost manageable.
+
+    target_fps = max(1.0, settings.VIDEO_SAMPLE_FPS)
     sample_interval = max(
         1,
-        round(fps / 6) if fps and fps > 0 else 1
+        round(fps / target_fps) if fps and fps > 0 else 1
     )
 
     frame_index = 0
     processed_frames = 0
+    processing_started = clock_time.perf_counter()
 
     best_by_plate = {}
 
@@ -1166,11 +1454,21 @@ def upload_video(
 
                 processed_frames += 1
 
-                result = process_frame(
-                    frame,
-                    source="video",
-                    persist=False,
-                )
+                try:
+                    result = process_frame(
+                        frame,
+                        source="video",
+                        persist=False,
+                    )
+                except Exception as exc:
+                    raise HTTPException(
+                        status_code=503,
+                        detail=(
+                            f"Video analysis failed at frame {frame_index}. "
+                            "Check PaddleOCR dependencies/model access and the "
+                            f"plate detector. Details: {exc}"
+                        ),
+                    ) from exc
 
                 plate = normalize_plate(result.get("plate_number"))
                 if (
@@ -1195,23 +1493,27 @@ def upload_video(
                     previous["status"] = "matched"
                     for field in (
                         "booking_id", "customer_name", "vehicle_model",
-                        "advisor", "booking_time", "service_type",
+                        "advisor", "advisor_id", "booking_time", "service_type",
                     ):
                         previous[field] = result.get(field)
                 if previous and previous.get("status") == "matched":
                     if result.get("status") != "matched":
                         for field in (
                             "booking_id", "customer_name", "vehicle_model",
-                            "advisor", "booking_time", "service_type",
+                            "advisor", "advisor_id", "booking_time", "service_type",
                         ):
                             result[field] = previous.get(field)
                         result["status"] = "matched"
 
-                if (
-                    previous is None
-                    or float(result.get("confidence") or 0)
-                    > float(previous.get("confidence") or 0)
-                ):
+                result_quality = min(
+                    float(result.get("confidence") or 0),
+                    float(result.get("ocr_confidence") or 0),
+                )
+                previous_quality = min(
+                    float(previous.get("confidence") or 0),
+                    float(previous.get("ocr_confidence") or 0),
+                ) if previous else -1
+                if previous is None or result_quality > previous_quality:
                     best_by_plate[plate] = result
 
             frame_index += 1
@@ -1221,14 +1523,22 @@ def upload_video(
         cap.release()
 
     results = list(best_by_plate.values())
+    notifications_created = 0
+    notifications_skipped = 0
     for result in results:
         filename = f"{uuid.uuid4().hex}.jpg"
         image_path = DETECTION_DIR / filename
         if cv2.imwrite(str(image_path), result.pop("_frame")):
             result["image_path"] = f"/uploads/detections/{filename}"
         result["source"] = "video"
+        if result.get("status") in ("matched", "unmatched"):
+            if persist_video_result(result):
+                notifications_created += 1
+            else:
+                notifications_skipped += 1
 
     results.sort(key=lambda result: result.get("frame_number", 0))
+    processing_elapsed = max(0.001, clock_time.perf_counter() - processing_started)
 
     return {
         "message": "Video processing completed",
@@ -1236,7 +1546,15 @@ def upload_video(
         "duration_seconds": round(duration, 2),
         "total_frames": total_frames,
         "processed_frames": processed_frames,
+        "processing_fps": round(processed_frames / processing_elapsed, 2),
+        "target_sample_fps": target_fps,
         "recognized_plate_count": len(results),
+        "notifications_created": notifications_created,
+        "notifications_skipped": notifications_skipped,
+        "walk_in_assigned_count": sum(
+            1 for result in results
+            if result.get("status") == "walk_in_assigned"
+        ),
         "sample_interval_seconds": round(
             sample_interval / fps, 3
         ) if fps and fps > 0 else 1,
@@ -1252,9 +1570,7 @@ def upload_video(
     }
 
 
-# --------------------------------------------------
-# CAMERA SOURCE
-# --------------------------------------------------
+
 
 def get_camera_source():
 
@@ -1267,10 +1583,7 @@ def get_camera_source():
     return source
 
 
-# --------------------------------------------------
-# CAMERA CONTROLS
-# ADMIN ONLY
-# --------------------------------------------------
+
 
 @app.post("/api/monitor/start")
 def start_monitor(
@@ -1309,9 +1622,7 @@ def monitor_status(
     return camera_monitor.status()
 
 
-# --------------------------------------------------
-# ADMIN NOTIFICATIONS
-# --------------------------------------------------
+
 
 @app.get("/api/admin/notifications")
 def admin_notifications(

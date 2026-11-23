@@ -10,8 +10,7 @@ from app.config import settings
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-# Avoid severe CPU oversubscription on machines where PyTorch defaults to
-# dozens of worker threads; the bundled model benchmarks best at eight here.
+
 torch.set_num_threads(min(8, max(1, os.cpu_count() or 1)))
 
 
@@ -76,11 +75,9 @@ class PlateDetector:
 
         height, width = image.shape[:2]
 
-        # The configured 64px input erased plates. 224px improves recall over
-        # the tested 256px setting while sustaining over 30 warm detector FPS.
+       
         image_size = max(224, int(settings.YOLO_IMAGE_SIZE))
-        # OCR applies strict Indian plate validation after detection, so a
-        # lower detector threshold safely improves recall for dim/dirty plates.
+        
         confidence_threshold = min(float(settings.YOLO_CONFIDENCE), 0.15)
         orientations = (
             (roi, None),
@@ -106,7 +103,7 @@ class PlateDetector:
 
                     x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
 
-                    # Convert the oriented ROI box back to the original ROI.
+                    
                     oh, ow = roi.shape[:2]
                     if rotation == "ccw":
                         x1, y1, x2, y2 = ow - y2, x1, ow - y1, x2

@@ -1,5 +1,5 @@
 import csv
-from datetime import date, datetime
+from datetime import date, datetime, time
 from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 
 from app.models import Advisor, Booking
+from app.config import settings
 from app.services.plate_utils import clean_indian_plate, normalize_plate
 
 
@@ -17,6 +18,89 @@ SAMPLE_BOOKINGS_PATH = BASE_DIR / "sample_bookings.csv"
 
 def get_indian_today():
     return datetime.now(INDIA_TZ).date()
+
+
+def slot_index(value) -> int:
+    """Return the 30-minute (or configured) slot containing a time value."""
+    if isinstance(value, str):
+        value = time.fromisoformat(value.strip())
+    if not isinstance(value, time):
+        raise ValueError("A valid booking time is required.")
+    slot_minutes = max(1, settings.BOOKING_SLOT_MINUTES)
+    return (value.hour * 60 + value.minute) // slot_minutes
+
+
+def count_advisor_slot_bookings(db: Session, advisor_id: int, booking_date: date, booking_time):
+    """Count non-cancelled bookings in the advisor's selected time block."""
+    target_slot = slot_index(booking_time)
+    bookings = db.query(Booking).filter(
+        Booking.advisor_id == advisor_id,
+        Booking.booking_date == booking_date,
+    ).all()
+    active = 0
+    database_keys = set()
+    for booking in bookings:
+        if str(booking.status or "").strip().lower() in {
+            "cancelled", "canceled", "completed", "closed"
+        }:
+            continue
+        try:
+            if slot_index(booking.booking_time) == target_slot:
+                active += 1
+                database_keys.add((
+                    normalize_plate(booking.vehicle_number),
+                    booking.advisor_id,
+                    booking.booking_date,
+                    slot_index(booking.booking_time),
+                ))
+        except (TypeError, ValueError):
+            continue
+
+    # Count fallback CSV appointments too, unless that same row was imported.
+    if SAMPLE_BOOKINGS_PATH.is_file():
+        with SAMPLE_BOOKINGS_PATH.open(encoding="utf-8-sig", newline="") as source:
+            for row in csv.DictReader(source):
+                try:
+                    row_date = date.fromisoformat(row["booking_date"])
+                    row_time = time.fromisoformat(row["booking_time"])
+                    row_advisor = int(row["advisor_id"])
+                    row_slot = slot_index(row_time)
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if (
+                    row_advisor != advisor_id
+                    or row_date != booking_date
+                    or row_slot != target_slot
+                    or str(row.get("status", "")).strip().lower()
+                    in {"cancelled", "canceled", "completed", "closed"}
+                ):
+                    continue
+                csv_key = (
+                    normalize_plate(row.get("vehicle_number", "")),
+                    row_advisor,
+                    row_date,
+                    row_slot,
+                )
+                if csv_key not in database_keys:
+                    active += 1
+    return active
+
+
+def find_available_advisor(db: Session, booking_date: date, booking_time):
+    """Choose the least-loaded active advisor who still has a slot."""
+    advisors = db.query(Advisor).filter(
+        Advisor.is_active == True
+    ).order_by(Advisor.id).all()
+    available = []
+    for advisor in advisors:
+        used = count_advisor_slot_bookings(
+            db, advisor.id, booking_date, booking_time
+        )
+        if used < settings.BOOKINGS_PER_ADVISOR_SLOT:
+            available.append((used, advisor.id, advisor))
+    if not available:
+        return None
+    return min(available, key=lambda entry: (entry[0], entry[1]))[2]
 
 
 def _one_edit_apart(first: str, second: str) -> bool:

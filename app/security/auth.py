@@ -1,4 +1,4 @@
-import os
+
 import hmac
 import hashlib
 import secrets
@@ -10,9 +10,7 @@ from app.database import get_db
 from app.models import Advisor
 
 
-# ------------------------------------------------
-# PASSWORD HASHING
-# ------------------------------------------------
+
 
 def hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
@@ -44,9 +42,7 @@ def verify_password(password: str, stored_hash: str) -> bool:
         return False
 
 
-# ------------------------------------------------
-# CURRENT LOGIN
-# ------------------------------------------------
+
 
 def get_current_user(
     request: Request,
@@ -92,9 +88,7 @@ def get_current_user(
     )
 
 
-# ------------------------------------------------
-# ROLE CHECKS
-# ------------------------------------------------
+
 
 def require_admin(user=Depends(get_current_user)):
     if user["role"] != "admin":

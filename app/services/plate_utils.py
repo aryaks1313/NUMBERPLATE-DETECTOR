@@ -14,13 +14,13 @@ def clean_indian_plate(value: str) -> str:
     """Normalize common OCR confusions in the numeric/alphabetic plate slots."""
     plate = normalize_plate(value)
     candidates = [plate]
-    # Regular Indian plates with a two-digit RTO code and a two-letter series.
+    
     if len(plate) == 10 and plate[:2].isalpha():
         digits = plate[2:4].translate(_DIGIT_FIX)
         series = plate[4:6].translate(_LETTER_FIX)
         number = plate[6:].translate(_DIGIT_FIX)
         candidates.append(plate[:2] + digits + series + number)
-    # Also allow the single-digit RTO variation used on older registrations.
+    
     if len(plate) == 9 and plate[:2].isalpha():
         candidate = (
             plate[:2] + plate[2:3].translate(_DIGIT_FIX)

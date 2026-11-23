@@ -195,6 +195,7 @@
                         </select>
                     </label>
                 </div>
+                <p class="section-intro">Each advisor can take up to 2 bookings per 30-minute slot. A full slot is rejected.</p>
 
                 <div class="form-actions">
                     <button type="submit" class="primary-btn">Save Booking</button>
@@ -303,13 +304,14 @@
                                 <th>Customer</th>
                                 <th>Appointment</th>
                                 <th>Advisor</th>
-                                <th>Confidence</th>
+                                <th>Plate Confidence</th>
+                                <th>OCR Confidence</th>
                                 <th>Frame</th>
                                 <th>Best Frame</th>
                             </tr>
                         </thead>
                         <tbody id="videoResults">
-                            <tr><td colspan="8" class="empty-cell">No recognized plates yet.</td></tr>
+                            <tr><td colspan="9" class="empty-cell">No recognized plates yet.</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -365,7 +367,8 @@
                     </div>
 
                     <div class="detail-list">
-                        <div><span>YOLO confidence</span><strong id="liveConfidence">---</strong></div>
+                        <div><span>Plate detector confidence</span><strong id="liveConfidence">---</strong></div>
+                        <div><span>PaddleOCR confidence</span><strong id="liveOcrConfidence">---</strong></div>
                         <div><span>Customer</span><strong id="liveCustomer">---</strong></div>
                         <div><span>Appointment Time</span><strong id="liveAppointment">---</strong></div>
                         <div><span>Vehicle</span><strong id="liveVehicle">---</strong></div>
@@ -384,7 +387,7 @@
         <section id="advisorsSection" class="page-section admin-only" hidden>
             <div class="section-intro">
                 <h2>Service Advisors</h2>
-                <p>Create advisor accounts and assign bookings to the correct advisor.</p>
+                <p>Set each advisor's phone and email so matched arrivals go to the correct person.</p>
             </div>
 
             <div class="content-grid">
@@ -414,6 +417,9 @@
                 <h2>Notifications</h2>
                 <p>Vehicle arrival and booking match notifications.</p>
             </div>
+            <article id="notificationSetupStatus" class="panel admin-only" hidden>
+                Checking email and WhatsApp setup...
+            </article>
             <article class="panel">
                 <div class="panel-heading">
                     <div><h3>Notification Centre</h3><p>Updates relevant to your account</p></div>
@@ -440,6 +446,6 @@
     </main>
 </div>
 
-<script src="/static/app.js?v=20261121-3"></script>
+<script src="/static/app.js?v=20261123-7"></script>
 </body>
 </html>
