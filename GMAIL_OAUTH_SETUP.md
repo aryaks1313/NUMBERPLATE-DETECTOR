@@ -21,6 +21,7 @@ copy the client ID or client secret into `.env`.
    EMAIL_ENABLED=true
    EMAIL_AUTH_METHOD=oauth
    GMAIL_OAUTH_CLIENT_FILE=
+   GMAIL_OAUTH_SENDER_EMAIL=your-sending-address@gmail.com
    GMAIL_OAUTH_TOKEN_FILE=gmail-oauth-token.json
    ```
 

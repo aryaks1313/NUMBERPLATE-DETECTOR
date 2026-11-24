@@ -49,6 +49,7 @@ class Settings:
     EMAIL_ENABLED = os.getenv("EMAIL_ENABLED", "false").lower() == "true"
     EMAIL_AUTH_METHOD = os.getenv("EMAIL_AUTH_METHOD", "oauth").strip().lower()
     GMAIL_OAUTH_CLIENT_FILE = os.getenv("GMAIL_OAUTH_CLIENT_FILE", "")
+    GMAIL_OAUTH_SENDER_EMAIL = os.getenv("GMAIL_OAUTH_SENDER_EMAIL", "").strip()
     GMAIL_OAUTH_TOKEN_FILE = os.getenv(
         "GMAIL_OAUTH_TOKEN_FILE", "gmail-oauth-token.json"
     )

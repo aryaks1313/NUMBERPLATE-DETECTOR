@@ -45,6 +45,8 @@ def gmail_oauth_status():
     messages = []
     if settings.EMAIL_AUTH_METHOD != "oauth":
         messages.append("Set EMAIL_AUTH_METHOD=oauth in .env.")
+    if not settings.GMAIL_OAUTH_SENDER_EMAIL:
+        messages.append("Set GMAIL_OAUTH_SENDER_EMAIL to the authorized Gmail address in .env.")
     if client_file is None:
         messages.append(
             "Put one Google Desktop OAuth client JSON in the project root, "
@@ -125,12 +127,14 @@ def _load_gmail_credentials():
 
 
 def send_gmail_api_message(recipient, subject: str, body: str):
+    sender = settings.GMAIL_OAUTH_SENDER_EMAIL
+    if not sender:
+        raise RuntimeError("Set GMAIL_OAUTH_SENDER_EMAIL to the authorized Gmail address in .env.")
     try:
         from googleapiclient.discovery import build
 
         credentials = _load_gmail_credentials()
         service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
-        sender = service.users().getProfile(userId="me").execute()["emailAddress"]
         mail = EmailMessage()
         mail["To"] = recipient or sender
         mail["From"] = sender
